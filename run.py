@@ -4,6 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
+# Bootstrap before importing third-party packages such as dotenv or Voyager.
+if __name__ == "__main__":
+    from launcher import ensure_runtime
+
+    ensure_runtime()
+
 from dotenv import load_dotenv
 
 from voyager import Voyager

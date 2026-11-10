@@ -13,13 +13,30 @@ OpenAI-compatible HTTP client for DeepSeek.
 
 ## Installation
 
-Use Python **3.10 or 3.11** for Voyager's legacy Chroma/LangChain dependencies,
-and **Node.js 22 or newer** for the updated Minecraft client. From the repository root:
+Install Python **3.10 or 3.11** and **Node.js 22 or newer** (including npm).
+Then, from the repository root, launch with:
+
+```bash
+python3 run.py
+```
+
+The launcher automatically creates `.venv` when needed, installs the Python
+requirements, installs the Node dependencies and builds the collection plugin.
+It uses the project's virtual environment automatically, even if you launch
+with a different system Python. Python 3.10 or 3.11 must be available to create
+that environment. First-time setup requires internet access; subsequent launches
+reuse installed dependencies. Setup runs again only when dependency/build inputs
+change or the project folder moves. Shell activation is not required.
+
+Keep your settings in `config.json` and your API key in `.env` as described
+below. If your terminal provides a `python` command, `python run.py` also works.
+You do not need to rerun pip or npm after opening a new terminal.
+
+For manual installation or development, the equivalent steps remain:
 
 ```bash
 python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
+.venv/bin/python -m pip install -e .
 cd voyager/env/mineflayer
 npm ci
 cd ../../..
