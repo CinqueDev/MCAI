@@ -39,7 +39,6 @@ app.post("/start", (req, res) => {
         return res.status(400).json({ error: error.message });
     }
     bot = connectionBot;
-    connectionBot.conversation = new Conversation(connectionBot);
     const connection = watchConnection(connectionBot, (error) => {
         if (!res.headersSent) res.status(400).json({ error });
         connectionBot.end();
@@ -64,6 +63,9 @@ app.post("/start", (req, res) => {
 
     connectionBot.once("spawn", async () => {
         try {
+            // Mineflayer installs bot.chat asynchronously during protocol setup.
+            // Bind it only after the built-in plugins are ready.
+            connectionBot.conversation = new Conversation(connectionBot);
             let itemTicks = 1;
             if (req.body.reset === "hard") {
                 connectionBot.chat("/clear @s");

@@ -19,15 +19,30 @@ function bridge() {
             if (name === "./lib/conversation") return require("../lib/conversation");
             if (name === "./lib/connection") return require("../lib/connection");
             if (name === "./lib/pause") return require("../lib/pause");
+            if (name === "./lib/utils") return { initCounter() {} };
+            if (name === "./lib/compatibility") return { worldSetupCommands: () => [] };
+            if (name === "./lib/observation/base") return { inject(bot) { bot.observe = () => "observation"; } };
+            if (name === "./lib/skillLoader") return { inject() {} };
             if (name === "mineflayer") return { createBot(settings) {
                 options.push(settings);
                 const bot = new EventEmitter();
                 bot.end = () => bot.emit("end", "closed");
-                bot.chat = (command) => {
+                const chat = (command) => {
                     bot.commands.push(command);
                     queueMicrotask(() => bot.emit("message", { json: { translate:
                         command === "/tick freeze" ? "commands.tick.status.frozen" : "commands.tick.status.running",
                     } }));
+                };
+                // Real createBot returns before chat is installed. Model that
+                // lifecycle so startup tests catch premature bot.chat.bind().
+                bot.finishLogin = () => {
+                    bot.chat = chat;
+                    bot.username = settings.username || "bot";
+                    bot.version = "1.21.11";
+                    bot.inventory = { items: () => [] };
+                    bot.loadPlugin = () => {};
+                    bot.waitForTicks = async () => {};
+                    bot.emit("spawn");
                 };
                 bot.commands = [];
                 bots.push(bot);
@@ -36,7 +51,10 @@ function bridge() {
             return {};
         },
     });
-    return { routes, bots, options };
+    return { routes, bots, options, async spawn(index = 0) {
+        bots[index].finishLogin();
+        await new Promise(setImmediate);
+    } };
 }
 function response() {
     return { headersSent: false, statusCode: 200,
@@ -56,10 +74,11 @@ test("start forwards remote settings and kick replies with useful failure", () =
 });
 
 test("late end from previous bot does not erase a new connection", async () => {
-    const { routes, bots } = bridge();
+    const { routes, bots, spawn } = bridge();
     const body = { port: 25565, pauseMode: "tick" };
     routes["/start"]({ body }, response());
     routes["/start"]({ body }, response());
+    await spawn(1);
     bots[0].emit("end", "late close");
     const paused = response();
     await routes["/pause"]({ body: { mode: "tick", paused: true } }, paused);
@@ -72,9 +91,10 @@ test("late end from previous bot does not erase a new connection", async () => {
     assert.deepEqual(bots[1].commands, ["/tick freeze", "/tick unfreeze"]);
 });
 
-test("chat routes operate independently and enforce the incoming private channel", () => {
-    const { routes, bots } = bridge();
+test("chat routes operate independently and enforce the incoming private channel", async () => {
+    const { routes, bots, spawn } = bridge();
     routes["/start"]({ body: { port: 25565 } }, response());
+    await spawn();
     const bot = bots[0];
     bot.username = "Voyager";
     bot.players = { Alice: {}, Voyager: {} };
@@ -102,4 +122,25 @@ test("fresh observations preserve the bot and are unavailable before spawn", () 
     routes["/observe"]({ body: { waitTicks: 10 } }, out);
     assert.equal(out.value, "fresh observation");
     assert.equal(bots[0].waitTicks, 10);
+});
+
+
+test("conversation waits for chat initialization and is not rebound on respawn", async () => {
+    const { routes, bots, spawn } = bridge();
+    const started = response();
+    assert.doesNotThrow(() => routes["/start"]({ body: { port: 25565, reset: "soft" } }, started));
+    const bot = bots[0];
+    assert.equal(bot.chat, undefined);
+    assert.equal(bot.conversation, undefined);
+    const waiting = response();
+    routes["/chat"]({ body: {} }, waiting);
+    assert.equal(waiting.statusCode, 409);
+    await spawn();
+    assert.equal(started.statusCode, 200);
+    assert.equal(started.value, "observation");
+    const session = bot.conversation;
+    bot.emit("spawn");
+    assert.equal(bot.conversation, session);
+    bot.chat("/time set day");
+    assert.deepEqual(bot.commands, ["/time set day"]);
 });
