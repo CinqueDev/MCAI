@@ -127,3 +127,6 @@ debug_*
 logs/
 plot_iter.py
 *.svg
+# Microsoft authentication tokens (never commit)
+.minecraft-auth/
+node_modules/

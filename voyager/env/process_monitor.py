@@ -21,7 +21,9 @@ class SubprocessMonitor:
         callback_match: str = r"^(?!x)x$",  # regex that will never match
         callback: callable = None,
         finished_callback: callable = None,
+        output_match: str = r"^(?!x)x$",
     ):
+        self.output_match = output_match
         self.commands = commands
         start_time = time.strftime("%Y%m%d_%H%M%S")
         self.name = name
@@ -54,6 +56,8 @@ class SubprocessMonitor:
         print(f"Subprocess {self.name} started with PID {self.process.pid}.")
         for line in iter(self.process.stdout.readline, ""):
             self.logger.info(line.strip())
+            if re.search(self.output_match, line):
+                print(line.strip(), flush=True)
             if re.search(self.ready_match, line):
                 self.ready_line = line
                 self.logger.info("Subprocess is ready.")

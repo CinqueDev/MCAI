@@ -1,4 +1,9 @@
 # Minecraft Instance Install
+
+> This guide documents the original Java 1.19 launcher/mod setup. The updated
+> client can target newer Java releases directly; see
+> [Minecraft versions](../README.md#minecraft-versions) for setup and validation limits.
+
 To start using Voyager, you should first make sure to have an official [Minecraft](https://www.minecraft.net/) game (version 1.19) installed. 
 
 There are two ways to start a Minecraft instance for Voyager. Sometimes the AI model will write an infinite loop that runs forever. In this case, there'll be a request timeout. Using Azure login can automatically resume the running if there's a request timeout.

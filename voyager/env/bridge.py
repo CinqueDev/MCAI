@@ -1,4 +1,5 @@
 import os.path
+import re
 import time
 import warnings
 from typing import SupportsFloat, Any, Tuple, Dict
@@ -24,13 +25,49 @@ class VoyagerEnv(gym.Env):
         server_port=3000,
         request_timeout=600,
         log_path="./logs",
+        mc_host="localhost",
+        mc_auth="offline",
+        mc_username=None,
+        mc_version=None,
+        mc_profiles_folder=".minecraft-auth",
+        mc_pause_mode="auto",
     ):
+        if mc_pause_mode not in ("auto", "none", "mod", "tick"):
+            raise ValueError("mc_pause_mode must be auto, none, mod, or tick")
+        if not isinstance(mc_host, str) or not mc_host.strip():
+            raise ValueError("mc_host must be a non-empty hostname or IP address")
+        if mc_auth not in ("offline", "microsoft"):
+            raise ValueError("mc_auth must be 'offline' or 'microsoft'")
+        if mc_username is not None and (not isinstance(mc_username, str) or not mc_username.strip()):
+            raise ValueError("mc_username must be a non-empty string")
+        if mc_auth == "microsoft" and not mc_username:
+            raise ValueError("mc_username is required for Microsoft login (account email or cache identifier)")
+        mc_username = mc_username or "bot"
+        if mc_auth == "offline" and not re.fullmatch(r"[A-Za-z0-9_]{1,16}", mc_username):
+            raise ValueError("Offline mc_username must contain 1-16 letters, digits, or underscores")
+        if mc_port is not None and (isinstance(mc_port, bool) or not isinstance(mc_port, int) or not 1 <= mc_port <= 65535):
+            raise ValueError("mc_port must be an integer between 1 and 65535")
+        if azure_login and (mc_host != "localhost" or mc_auth != "offline"):
+            raise ValueError("azure_login launches a local world; omit it for direct multiplayer connections")
+        if mc_port is None and not azure_login and mc_host != "localhost":
+            mc_port = 25565
         if not mc_port and not azure_login:
             raise ValueError("Either mc_port or azure_login must be specified")
         if mc_port and azure_login:
             warnings.warn(
                 "Both mc_port and mc_login are specified, mc_port will be ignored"
             )
+        self.mc_host = mc_host
+        self.mc_auth = mc_auth
+        self.mc_username = mc_username
+        self.mc_version = mc_version
+        self.mc_profiles_folder = os.path.abspath(os.path.expanduser(mc_profiles_folder))
+        self.mc_pause_mode = mc_pause_mode
+        if mc_pause_mode == "auto":
+            self.mc_pause_mode = "mod" if (
+                mc_host in ("localhost", "127.0.0.1", "::1") and mc_auth == "offline"
+            ) else "none"
+        self.mc_pause = self.mc_pause_mode != "none"
         self.mc_port = mc_port
         self.azure_login = azure_login
         self.server = f"{server_host}:{server_port}"
@@ -57,6 +94,7 @@ class VoyagerEnv(gym.Env):
                 str(server_port),
             ],
             name="mineflayer",
+            output_match=r"^Microsoft sign-in:",
             ready_match=r"Server started on port (\d+)",
             log_path=U.f_join(self.log_path, "mineflayer"),
         )
@@ -85,6 +123,7 @@ class VoyagerEnv(gym.Env):
             print("Mineflayer process has exited, restarting")
             self.mineflayer.run()
             if not self.mineflayer.is_running:
+                retry += 1
                 if retry > 3:
                     raise RuntimeError("Mineflayer process failed to start")
                 else:
@@ -98,7 +137,7 @@ class VoyagerEnv(gym.Env):
             if res.status_code != 200:
                 self.mineflayer.stop()
                 raise RuntimeError(
-                    f"Minecraft server reply with code {res.status_code}"
+                    f"Minecraft connection failed ({res.status_code}): {res.text}"
                 )
             return res.json()
 
@@ -140,7 +179,13 @@ class VoyagerEnv(gym.Env):
             raise RuntimeError("inventory can only be set when options is hard")
 
         self.reset_options = {
+            "host": self.mc_host,
             "port": self.mc_port,
+            "auth": self.mc_auth,
+            "username": self.mc_username,
+            "version": self.mc_version,
+            "profilesFolder": self.mc_profiles_folder,
+            "pauseMode": self.mc_pause_mode,
             "reset": options.get("mode", "hard"),
             "inventory": options.get("inventory", {}),
             "equipment": options.get("equipment", []),
@@ -172,18 +217,20 @@ class VoyagerEnv(gym.Env):
         self.mineflayer.stop()
         return not self.connected
 
-    def pause(self):
-        if self.mineflayer.is_running and not self.server_paused:
-            res = requests.post(f"{self.server}/pause")
-            if res.status_code == 200:
-                self.server_paused = True
+    def _set_paused(self, paused):
+        if self.mc_pause and self.mineflayer.is_running and self.server_paused != paused:
+            res = requests.post(
+                f"{self.server}/pause",
+                json={"paused": paused, "mode": self.mc_pause_mode},
+                timeout=self.request_timeout,
+            )
+            if res.status_code != 200:
+                raise RuntimeError(f"Failed to change Minecraft pause state: {res.text}")
+            self.server_paused = paused
         return self.server_paused
 
+    def pause(self):
+        return self._set_paused(True)
+
     def unpause(self):
-        if self.mineflayer.is_running and self.server_paused:
-            res = requests.post(f"{self.server}/pause")
-            if res.status_code == 200:
-                self.server_paused = False
-            else:
-                print(res.json())
-        return self.server_paused
+        return self._set_paused(False)

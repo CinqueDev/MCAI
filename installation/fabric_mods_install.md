@@ -1,4 +1,10 @@
 # Fabric Mods Install
+
+> **Legacy Java 1.19 setup.** The mod builds below are for the original Voyager
+> environment. For newer versions, use a vanilla world/server with
+> `--mc-pause-mode none` or, on Java 1.20.3+ with OP permissions,
+> `--mc-pause-mode tick`. See [Minecraft versions](../README.md#minecraft-versions).
+
 In this tutorial, we will install the Fabric launcher and 5 mods. Remember to use the correct Fabric version that matches your game version (1.19) of all the mods. 
 1. You can download the latest Fabric Installer from [here](https://fabricmc.net/use/installer/). For Windows users, just download the `.exe` file. For Mac or Ubuntu users, download the jar file and call `java -jar fabric-installer-0.11.2.jar` to install. Select game version to be `1.19` and loader version to be `0.14.18`. It will automatically detect your Minecraft game install location.
 2. After installing Fabric, you will have a `YOUR_MINECRAFT_GAME_LOCATION/mods` folder. You need to put all the mods under this folder. Also, you will have a `YOUR_MINECRAFT_GAME_LOCATION/versions/fabric-loader-0.14.18-1.19`. This is the version you will run the game with. 

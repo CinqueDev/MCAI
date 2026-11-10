@@ -9,7 +9,6 @@ import { emptyInventoryIfFull, ItemFilter } from "./Inventory";
 import { findFromVein } from "./BlockVeins";
 import { Collectable, Targets } from "./Targets";
 import { Item } from "prismarine-item";
-import mcDataLoader from "minecraft-data";
 import { once } from "events";
 import { callbackify } from "util";
 
@@ -67,14 +66,11 @@ async function collectAll(
                             );
                             // @ts-ignore
                         } else if (err.name === "NoItem") {
-                            const properties =
-                                bot.registry.blocksByName[closest.name];
-                            const leastTool = Object.keys(
-                                properties.harvestTools
-                            )[0];
-                            const item = bot.registry.items[leastTool];
+                            const properties = bot.registry.blocksByName[(closest as Block).name];
+                            const leastTool = Object.keys(properties?.harvestTools ?? {})[0];
+                            const item = leastTool === undefined ? undefined : bot.registry.items[Number(leastTool)];
                             bot.chat(
-                                `I need at least a ${item.name} to mine ${closest.name}!  Skip it!`
+                                `I need ${item ? `at least a ${item.name}` : "a suitable tool"} to mine ${closest.name}!  Skip it!`
                             );
                             return;
                         } else if (
@@ -330,7 +326,7 @@ export class CollectBlock {
         this.bot = bot;
         this.targets = new Targets(bot);
         // @ts-ignore
-        this.movements = new Movements(bot, mcDataLoader(bot.version));
+        this.movements = new Movements(bot);
     }
 
     /**

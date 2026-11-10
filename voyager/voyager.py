@@ -51,6 +51,12 @@ class Voyager:
         deepseek_api_key: str = None,
         deepseek_base_url: str = None,
         api_request_timeout: int = None,
+        mc_host: str = "localhost",
+        mc_auth: str = "offline",
+        mc_username: str = None,
+        mc_version: str = None,
+        mc_profiles_folder: str = ".minecraft-auth",
+        mc_pause_mode: str = "auto",
     ):
         """
         The main class for Voyager.
@@ -59,7 +65,13 @@ class Voyager:
         Critic agent is the self-verification in paper.
         Skill manager is the skill library in paper.
         :param mc_port: minecraft in-game port
-        :param azure_login: minecraft login config
+        :param mc_host: Minecraft server hostname or IP (default localhost)
+        :param mc_auth: offline or microsoft (device-code login)
+        :param mc_username: offline player name or Microsoft account/cache identifier
+        :param mc_version: protocol version, or None for automatic detection
+        :param mc_profiles_folder: local Microsoft token cache directory
+        :param mc_pause_mode: auto, none, mod (/pause), or tick (/tick freeze and unfreeze)
+        :param azure_login: legacy local Minecraft launcher config
         :param server_port: mineflayer port
         :param openai_api_key: deprecated alias for deepseek_api_key (must be a DeepSeek key)
         :param env_wait_ticks: how many ticks at the end each step will wait, if you found some chat log missing,
@@ -117,6 +129,12 @@ class Voyager:
         # init env
         self.env = VoyagerEnv(
             mc_port=mc_port,
+            mc_host=mc_host,
+            mc_auth=mc_auth,
+            mc_username=mc_username,
+            mc_version=mc_version,
+            mc_profiles_folder=mc_profiles_folder,
+            mc_pause_mode=mc_pause_mode,
             azure_login=azure_login,
             server_port=server_port,
             request_timeout=env_request_timeout,
