@@ -13,6 +13,8 @@ bot.blockAt(position); // Return the block at `position`. `position` is `Vec3`
 
 // These are other Mineflayer async functions you can use:
 await bot.equip(item, destination); // Equip the item in the specified destination. `item` is `Item`, `destination` can only be "hand", "head", "torso", "legs", "feet", "off-hand"
+// Obtain a real inventory Item and check it before equipping. mcData.itemsByName contains definitions, not inventory stacks.
+// After crafting, fetch the inventory Item again. If it is missing, collect materials before attempting to equip it.
 await bot.consume(); // Consume the item in the bot's hand. You must equip the item to consume first. Useful for eating food, drinking potions, etc.
 await bot.fish(); // Let bot fish. Before calling this function, you must first get to a water block and then equip a fishing rod. The bot will automatically stop fishing when it catches a fish
 await bot.sleep(bedBlock); // Sleep until sunrise. You must get to a bed block first

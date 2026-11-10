@@ -43,6 +43,8 @@ Code:
     9) Do not write infinite loops or recursive functions.
     10) Do not use `bot.on` or `bot.once` to register event listeners. You definitely do not need them.
     11) Name your function in a meaningful way (can infer the task from the name).
+    12) Before crafting a tool, budget ingredients for the whole sequence, including planks consumed by sticks and a crafting table. The count in craftItem is recipe executions, not output items: one log makes four planks, and one stick recipe consumes two planks and makes four sticks. Gather additional logs if needed.
+    13) craftItem may report missing ingredients in chat and return without producing the item. After crafting, fetch the item again from bot.inventory and verify it exists before using or equipping it. If it is missing, gather the missing materials and retry or return with a clear bot.chat explanation. Never call bot.equip with null or undefined, and never assume a crafting attempt succeeded.
 
 You should only respond in the format as described below:
 RESPONSE FORMAT:
