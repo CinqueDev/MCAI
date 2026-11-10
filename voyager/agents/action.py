@@ -3,7 +3,7 @@ import time
 
 import voyager.utils as U
 from javascript import require
-from langchain.chat_models import ChatOpenAI
+from voyager.llm import DEFAULT_MODEL, DeepSeekChat
 from langchain.prompts import SystemMessagePromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 
@@ -14,13 +14,15 @@ from voyager.control_primitives_context import load_control_primitives_context
 class ActionAgent:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
+        model_name=DEFAULT_MODEL,
         temperature=0,
         request_timout=120,
         ckpt_dir="ckpt",
         resume=False,
         chat_log=True,
         execution_error=True,
+        api_key=None,
+        base_url=None,
     ):
         self.ckpt_dir = ckpt_dir
         self.chat_log = chat_log
@@ -31,10 +33,12 @@ class ActionAgent:
             self.chest_memory = U.load_json(f"{ckpt_dir}/action/chest_memory.json")
         else:
             self.chest_memory = {}
-        self.llm = ChatOpenAI(
+        self.llm = DeepSeekChat(
             model_name=model_name,
             temperature=temperature,
             request_timeout=request_timout,
+            api_key=api_key,
+            base_url=base_url,
         )
 
     def update_chest_memory(self, chests):

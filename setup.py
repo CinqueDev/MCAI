@@ -1,6 +1,5 @@
 import os
 import pathlib
-import pkg_resources
 from setuptools import setup, find_packages
 
 
@@ -19,7 +18,7 @@ def _read_file(fname):
 def _read_install_requires():
     with pathlib.Path("requirements.txt").open() as fp:
         return [
-            str(requirement) for requirement in pkg_resources.parse_requirements(fp)
+            line.strip() for line in fp if line.strip() and not line.startswith("#")
         ]
 
 
@@ -44,7 +43,7 @@ setup(
         "Large Language Models",
     ],
     license="MIT License",
-    packages=find_packages(include=f"{PKG_NAME}.*"),
+    packages=find_packages(include=[PKG_NAME, f"{PKG_NAME}.*"]),
     include_package_data=True,
     zip_safe=False,
     install_requires=_read_install_requires(),

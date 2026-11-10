@@ -6,18 +6,17 @@ import re
 import voyager.utils as U
 from voyager.prompts import load_prompt
 from voyager.utils.json_utils import fix_and_parse_json
-from langchain.chat_models import ChatOpenAI
-from langchain.embeddings.openai import OpenAIEmbeddings
+from voyager.llm import DEFAULT_MODEL, DeepSeekChat
 from langchain.schema import HumanMessage, SystemMessage
-from langchain.vectorstores import Chroma
+from voyager.embeddings import local_vector_store
 
 
 class CurriculumAgent:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
+        model_name=DEFAULT_MODEL,
         temperature=0,
-        qa_model_name="gpt-3.5-turbo",
+        qa_model_name=DEFAULT_MODEL,
         qa_temperature=0,
         request_timout=120,
         ckpt_dir="ckpt",
@@ -25,16 +24,22 @@ class CurriculumAgent:
         mode="auto",
         warm_up=None,
         core_inventory_items: str | None = None,
+        api_key=None,
+        base_url=None,
     ):
-        self.llm = ChatOpenAI(
+        self.llm = DeepSeekChat(
             model_name=model_name,
             temperature=temperature,
             request_timeout=request_timout,
+            api_key=api_key,
+            base_url=base_url,
         )
-        self.qa_llm = ChatOpenAI(
+        self.qa_llm = DeepSeekChat(
             model_name=qa_model_name,
             temperature=qa_temperature,
             request_timeout=request_timout,
+            api_key=api_key,
+            base_url=base_url,
         )
         assert mode in [
             "auto",
@@ -55,10 +60,11 @@ class CurriculumAgent:
             self.failed_tasks = []
             self.qa_cache = {}
         # vectordb for qa cache
-        self.qa_cache_questions_vectordb = Chroma(
+        self.qa_cache_questions_vectordb = local_vector_store(
             collection_name="qa_cache_questions_vectordb",
-            embedding_function=OpenAIEmbeddings(),
-            persist_directory=f"{ckpt_dir}/curriculum/vectordb",
+            directory=f"{ckpt_dir}/curriculum",
+            texts=list(self.qa_cache),
+            ids=list(self.qa_cache),
         )
         assert self.qa_cache_questions_vectordb._collection.count() == len(
             self.qa_cache
@@ -67,7 +73,7 @@ class CurriculumAgent:
             f"There are {self.qa_cache_questions_vectordb._collection.count()} questions in vectordb "
             f"but {len(self.qa_cache)} questions in qa_cache.json.\n"
             f"Did you set resume=False when initializing the agent?\n"
-            f"You may need to manually delete the qa cache question vectordb directory for running from scratch.\n"
+            f"You may need to manually delete the curriculum/vectordb-local-minilm directory for running from scratch.\n"
         )
         # if warm up not defined, initialize it as a dict, else, initialize all the missing value as a default value
         if not warm_up:

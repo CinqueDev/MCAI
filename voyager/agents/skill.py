@@ -1,10 +1,9 @@
 import os
 
 import voyager.utils as U
-from langchain.chat_models import ChatOpenAI
-from langchain.embeddings.openai import OpenAIEmbeddings
+from voyager.llm import DEFAULT_MODEL, DeepSeekChat
 from langchain.schema import HumanMessage, SystemMessage
-from langchain.vectorstores import Chroma
+from voyager.embeddings import local_vector_store
 
 from voyager.prompts import load_prompt
 from voyager.control_primitives import load_control_primitives
@@ -13,17 +12,21 @@ from voyager.control_primitives import load_control_primitives
 class SkillManager:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
+        model_name=DEFAULT_MODEL,
         temperature=0,
         retrieval_top_k=5,
         request_timout=120,
         ckpt_dir="ckpt",
         resume=False,
+        api_key=None,
+        base_url=None,
     ):
-        self.llm = ChatOpenAI(
+        self.llm = DeepSeekChat(
             model_name=model_name,
             temperature=temperature,
             request_timeout=request_timout,
+            api_key=api_key,
+            base_url=base_url,
         )
         U.f_mkdir(f"{ckpt_dir}/skill/code")
         U.f_mkdir(f"{ckpt_dir}/skill/description")
@@ -37,16 +40,18 @@ class SkillManager:
             self.skills = {}
         self.retrieval_top_k = retrieval_top_k
         self.ckpt_dir = ckpt_dir
-        self.vectordb = Chroma(
+        self.vectordb = local_vector_store(
             collection_name="skill_vectordb",
-            embedding_function=OpenAIEmbeddings(),
-            persist_directory=f"{ckpt_dir}/skill/vectordb",
+            directory=f"{ckpt_dir}/skill",
+            texts=[entry["description"] for entry in self.skills.values()],
+            ids=list(self.skills),
+            metadatas=[{"name": name} for name in self.skills],
         )
         assert self.vectordb._collection.count() == len(self.skills), (
             f"Skill Manager's vectordb is not synced with skills.json.\n"
             f"There are {self.vectordb._collection.count()} skills in vectordb but {len(self.skills)} skills in skills.json.\n"
             f"Did you set resume=False when initializing the manager?\n"
-            f"You may need to manually delete the vectordb directory for running from scratch."
+            f"You may need to manually delete the vectordb-local-minilm directory for running from scratch."
         )
 
     @property

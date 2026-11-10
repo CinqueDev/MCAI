@@ -26,7 +26,7 @@ After you run the learning process, you will see a checkpoint directory like:
 │   ├── completed_tasks.json
 │   ├── failed_tasks.json
 │   ├── qa_cache.json
-│   └── vectordb
+│   └── vectordb-local-minilm
 ├── events
 └── skill
     ├── code
@@ -38,7 +38,7 @@ After you run the learning process, you will see a checkpoint directory like:
     │   ├── collectBamboo.txt
     │   └── ...
     ├── skills.json
-    └── vectordb
+    └── vectordb-local-minilm
 ```
 
 Only `YOUR_CKPT_DIR/skill` is a learned skill library, which you can share with others. Create a pull request and add your skill library link to this page.
