@@ -24,7 +24,7 @@ async function buildStructure(bot, blocks) {
         if (available < count) throw new Error(`Build needs ${count} ${name}; only ${available} available. Gather materials first.`);
     }
     // Supply a ground-up blueprint, supports before attached blocks. No implicit clearing.
-    for (const block of blocks) await placeItem(bot, block.name, block.position);
+    for (const block of blocks) { bot.checkTask?.(); await placeItem(bot, block.name, block.position); }
     for (const block of blocks) {
         const position = new Vec3(block.position.x, block.position.y, block.position.z);
         if (bot.blockAt(position)?.name !== block.name) throw new Error(`Build verification failed at ${position}`);

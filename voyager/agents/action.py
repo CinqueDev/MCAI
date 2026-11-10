@@ -165,6 +165,13 @@ class ActionAgent:
         observation += "Players (coordinates only for visible entities): " + json.dumps(status.get("players", [])) + "\n\n"
         observation += "Verified action results / attempted interactions: " + json.dumps(status.get("actionResults", [])) + "\n\n"
 
+        control = status.get("taskControl") or {}
+        active = control.get("active") or {}
+        history = [{"id": a["id"], "state": a["state"], "results": a.get("results", []),
+                    "operations": [{"name": op["name"], "state": op["state"]} for op in a.get("operations", [])[-20:]]}
+                   for a in active.get("actions", [])[-10:]]
+        observation += "Task execution history (recheck world; do not repeat completed drops/transfers): " + json.dumps(history) + "\n\n"
+
         observation += f"Biome: {biome}\n\n"
 
         observation += f"Time: {time_of_day}\n\n"

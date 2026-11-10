@@ -1,4 +1,5 @@
 const fs = require("fs");
+const { TaskController, TaskInterrupted } = require("./lib/tasks");
 const { Conversation } = require("./lib/conversation");
 const { setPaused } = require("./lib/pause");
 const { connectionOptions, watchConnection } = require("./lib/connection");
@@ -39,13 +40,17 @@ app.post("/start", (req, res) => {
         return res.status(400).json({ error: error.message });
     }
     bot = connectionBot;
-    const connection = watchConnection(connectionBot, (error) => {
-        if (!res.headersSent) res.status(400).json({ error });
-        connectionBot.end();
-    }, () => {
-        if (connectionBot.viewer) connectionBot.viewer.close();
-        if (bot === connectionBot) bot = null;
-    });
+    const connection = watchConnection(
+        connectionBot,
+        (error) => {
+            if (!res.headersSent) res.status(400).json({ error });
+            connectionBot.end();
+        },
+        () => {
+            if (connectionBot.viewer) connectionBot.viewer.close();
+            if (bot === connectionBot) bot = null;
+        }
+    );
 
     // Event subscriptions
     connectionBot.waitTicks = req.body.waitTicks;
@@ -75,7 +80,9 @@ app.post("/start", (req, res) => {
                     ? req.body.equipment
                     : [null, null, null, null, null, null];
                 for (let key in inventory) {
-                    connectionBot.chat(`/give @s minecraft:${key} ${inventory[key]}`);
+                    connectionBot.chat(
+                        `/give @s minecraft:${key} ${inventory[key]}`
+                    );
                     itemTicks += 1;
                 }
                 const equipmentNames = [
@@ -105,14 +112,17 @@ app.post("/start", (req, res) => {
 
             // if iron_pickaxe is in connectionBot's inventory
             if (
-                connectionBot.inventory.items().find((item) => item.name === "iron_pickaxe")
+                connectionBot.inventory
+                    .items()
+                    .find((item) => item.name === "iron_pickaxe")
             ) {
                 connectionBot.iron_pickaxe = true;
             }
 
             const { pathfinder } = require("mineflayer-pathfinder");
             const tool = require("mineflayer-tool").plugin;
-            const collectBlock = require("./mineflayer-collectblock/lib").plugin;
+            const collectBlock =
+                require("./mineflayer-collectblock/lib").plugin;
             const pvp = require("mineflayer-pvp").plugin;
             const minecraftHawkEye = require("minecrafthawkeye").default;
             connectionBot.loadPlugin(pathfinder);
@@ -135,13 +145,22 @@ app.post("/start", (req, res) => {
                 BlockRecords,
             ]);
             skills.inject(connectionBot);
+            connectionBot.tasks = new TaskController(connectionBot, {
+                journalPath: req.body.taskJournalPath || null,
+                operators: req.body.taskOperators || [],
+            });
+            connectionBot.tasks.install();
 
             if (req.body.spread) {
-                connectionBot.chat(`/spreadplayers ~ ~ 0 300 under 80 false @s`);
+                connectionBot.chat(
+                    `/spreadplayers ~ ~ 0 300 under 80 false @s`
+                );
                 await connectionBot.waitForTicks(connectionBot.waitTicks);
             }
 
-            await connectionBot.waitForTicks(connectionBot.waitTicks * itemTicks);
+            await connectionBot.waitForTicks(
+                connectionBot.waitTicks * itemTicks
+            );
             if (res.headersSent) return;
             connection.ready();
             res.json(connectionBot.observe());
@@ -152,241 +171,331 @@ app.post("/start", (req, res) => {
             }
             console.log(`Connected to Minecraft Java ${connectionBot.version}`);
         } catch (error) {
-            if (!res.headersSent) res.status(400).json({ error: error.message });
+            if (!res.headersSent)
+                res.status(400).json({ error: error.message });
             connectionBot.end();
         }
     });
 });
 
 app.post("/step", async (req, res) => {
-    // import useful package
-    let response_sent = false;
-    function otherError(err) {
-        console.log("Uncaught Error");
-        bot.emit("error", handleError(err));
-        bot.waitForTicks(bot.waitTicks).then(() => {
+    const stepBot = bot;
+    if (!stepBot?.tasks)
+        return res.status(409).json({ error: "Bot not ready" });
+    const controller = stepBot.tasks;
+    let lease, executionError;
+    try {
+        lease = controller.beginAction(req.body.execution);
+        await controller.context.run(lease, async () => {
+            const bot = stepBot;
+
+            // import useful package
+            let response_sent = false;
+            function otherError(err) {
+                if (response_sent || lease.abort.signal.aborted) return;
+                console.log("Uncaught Error");
+                bot.emit("error", handleError(err));
+                bot.waitForTicks(bot.waitTicks).then(() => {
+                    if (!response_sent) {
+                        response_sent = true;
+                        res.json(bot.observe());
+                    }
+                });
+            }
+
+            process.on("uncaughtException", otherError);
+            lease.cleanup = () => process.off("uncaughtException", otherError);
+
+            const mcData = require("minecraft-data")(bot.version);
+            mcData.itemsByName["leather_cap"] =
+                mcData.itemsByName["leather_helmet"];
+            mcData.itemsByName["leather_tunic"] =
+                mcData.itemsByName["leather_chestplate"];
+            mcData.itemsByName["leather_pants"] =
+                mcData.itemsByName["leather_leggings"];
+            mcData.itemsByName["leather_boots"] =
+                mcData.itemsByName["leather_boots"];
+            mcData.itemsByName["lapis_lazuli_ore"] =
+                mcData.itemsByName["lapis_ore"];
+            mcData.blocksByName["lapis_lazuli_ore"] =
+                mcData.blocksByName["lapis_ore"];
+            const {
+                Movements,
+                goals: {
+                    Goal,
+                    GoalBlock,
+                    GoalNear,
+                    GoalXZ,
+                    GoalNearXZ,
+                    GoalY,
+                    GoalGetToBlock,
+                    GoalLookAtBlock,
+                    GoalBreakBlock,
+                    GoalCompositeAny,
+                    GoalCompositeAll,
+                    GoalInvert,
+                    GoalFollow,
+                    GoalPlaceBlock,
+                },
+                pathfinder,
+                Move,
+                ComputedPath,
+                PartiallyComputedPath,
+                XZCoordinates,
+                XYZCoordinates,
+                SafeBlock,
+                GoalPlaceBlockOptions,
+            } = require("mineflayer-pathfinder");
+            const { Vec3 } = require("vec3");
+
+            // Set up pathfinder
+            const movements = new Movements(bot);
+            if (req.body.playerRequest) {
+                movements.canDig = false;
+                movements.allow1by1towers = false;
+                movements.scafoldingBlocks = [];
+            }
+            bot.pathfinder.setMovements(movements);
+
+            bot.globalTickCounter = 0;
+            bot.stuckTickCounter = 0;
+            bot.stuckPosList = [];
+
+            function onTick() {
+                if (lease.abort.signal.aborted) return;
+                bot.globalTickCounter++;
+                if (bot.pathfinder.isMoving()) {
+                    bot.stuckTickCounter++;
+                    if (bot.stuckTickCounter >= 100) {
+                        onStuck(1.5);
+                        bot.stuckTickCounter = 0;
+                    }
+                }
+            }
+
+            bot.on("physicsTick", onTick);
+
+            // initialize fail count
+            let _craftItemFailCount = 0;
+            let _killMobFailCount = 0;
+            let _mineBlockFailCount = 0;
+            let _placeItemFailCount = 0;
+            let _smeltItemFailCount = 0;
+
+            // Retrieve array form post bod
+            bot.conversation.task = req.body.task || null;
+            const code = req.body.code;
+            const programs = req.body.programs;
+            bot.cumulativeObs = [];
+            bot.actionResults = [];
+            await bot.waitForTicks(bot.waitTicks);
+            const r = await evaluateCode(code, programs);
+            if (r instanceof TaskInterrupted) throw r;
+            if (r !== "success")
+                executionError = r instanceof Error ? r : new Error(String(r));
+            process.off("uncaughtException", otherError);
+            if (r !== "success") {
+                bot.emit("error", handleError(r));
+            }
+            // wait for last message
+            await bot.waitForTicks(bot.waitTicks);
             if (!response_sent) {
                 response_sent = true;
                 res.json(bot.observe());
             }
-        });
-    }
+            bot.removeListener("physicsTick", onTick);
 
-    process.on("uncaughtException", otherError);
-
-    const mcData = require("minecraft-data")(bot.version);
-    mcData.itemsByName["leather_cap"] = mcData.itemsByName["leather_helmet"];
-    mcData.itemsByName["leather_tunic"] =
-        mcData.itemsByName["leather_chestplate"];
-    mcData.itemsByName["leather_pants"] =
-        mcData.itemsByName["leather_leggings"];
-    mcData.itemsByName["leather_boots"] = mcData.itemsByName["leather_boots"];
-    mcData.itemsByName["lapis_lazuli_ore"] = mcData.itemsByName["lapis_ore"];
-    mcData.blocksByName["lapis_lazuli_ore"] = mcData.blocksByName["lapis_ore"];
-    const {
-        Movements,
-        goals: {
-            Goal,
-            GoalBlock,
-            GoalNear,
-            GoalXZ,
-            GoalNearXZ,
-            GoalY,
-            GoalGetToBlock,
-            GoalLookAtBlock,
-            GoalBreakBlock,
-            GoalCompositeAny,
-            GoalCompositeAll,
-            GoalInvert,
-            GoalFollow,
-            GoalPlaceBlock,
-        },
-        pathfinder,
-        Move,
-        ComputedPath,
-        PartiallyComputedPath,
-        XZCoordinates,
-        XYZCoordinates,
-        SafeBlock,
-        GoalPlaceBlockOptions,
-    } = require("mineflayer-pathfinder");
-    const { Vec3 } = require("vec3");
-
-    // Set up pathfinder
-    const movements = new Movements(bot);
-    if (req.body.playerRequest) {
-        movements.canDig = false;
-        movements.allow1by1towers = false;
-        movements.scafoldingBlocks = [];
-    }
-    bot.pathfinder.setMovements(movements);
-
-    bot.globalTickCounter = 0;
-    bot.stuckTickCounter = 0;
-    bot.stuckPosList = [];
-
-    function onTick() {
-        bot.globalTickCounter++;
-        if (bot.pathfinder.isMoving()) {
-            bot.stuckTickCounter++;
-            if (bot.stuckTickCounter >= 100) {
-                onStuck(1.5);
-                bot.stuckTickCounter = 0;
-            }
-        }
-    }
-
-    bot.on("physicsTick", onTick);
-
-    // initialize fail count
-    let _craftItemFailCount = 0;
-    let _killMobFailCount = 0;
-    let _mineBlockFailCount = 0;
-    let _placeItemFailCount = 0;
-    let _smeltItemFailCount = 0;
-
-    // Retrieve array form post bod
-    bot.conversation.task = req.body.task || null;
-    const code = req.body.code;
-    const programs = req.body.programs;
-    bot.cumulativeObs = [];
-    bot.actionResults = [];
-    await bot.waitForTicks(bot.waitTicks);
-    const r = await evaluateCode(code, programs);
-    process.off("uncaughtException", otherError);
-    if (r !== "success") {
-        bot.emit("error", handleError(r));
-    }
-    // wait for last message
-    await bot.waitForTicks(bot.waitTicks);
-    if (!response_sent) {
-        response_sent = true;
-        res.json(bot.observe());
-    }
-    bot.removeListener("physicsTick", onTick);
-
-    async function evaluateCode(code, programs) {
-        // Echo the code produced for players to see it. Don't echo when the bot code is already producing dialog or it will double echo
-        try {
-            await eval("(async () => {" + programs + "\n" + code + "})()");
-            return "success";
-        } catch (err) {
-            return err;
-        }
-    }
-
-    function onStuck(posThreshold) {
-        if (req.body.playerRequest) return; // No teleport recovery while visiting players.
-        const currentPos = bot.entity.position;
-        bot.stuckPosList.push(currentPos);
-
-        // Check if the list is full
-        if (bot.stuckPosList.length === 5) {
-            const oldestPos = bot.stuckPosList[0];
-            const posDifference = currentPos.distanceTo(oldestPos);
-
-            if (posDifference < posThreshold) {
-                teleportBot(); // execute the function
-            }
-
-            // Remove the oldest time from the list
-            bot.stuckPosList.shift();
-        }
-    }
-
-    function teleportBot() {
-        const blocks = bot.findBlocks({
-            matching: (block) => {
-                return block.type === 0;
-            },
-            maxDistance: 1,
-            count: 27,
-        });
-
-        if (blocks) {
-            // console.log(blocks.length);
-            const randomIndex = Math.floor(Math.random() * blocks.length);
-            const block = blocks[randomIndex];
-            bot.chat(`/tp @s ${block.x} ${block.y} ${block.z}`);
-        } else {
-            bot.chat("/tp @s ~ ~1.25 ~");
-        }
-    }
-
-    function handleError(err) {
-        let stack = err.stack;
-        if (!stack) {
-            return err;
-        }
-        console.log(stack);
-        const final_line = stack.split("\n")[1];
-        const regex = /<anonymous>:(\d+):\d+\)/;
-
-        const programs_length = programs.split("\n").length;
-        let match_line = null;
-        for (const line of stack.split("\n")) {
-            const match = regex.exec(line);
-            if (match) {
-                const line_num = parseInt(match[1]);
-                if (line_num >= programs_length) {
-                    match_line = line_num - programs_length;
-                    break;
+            async function evaluateCode(code, programs) {
+                // Echo the code produced for players to see it. Don't echo when the bot code is already producing dialog or it will double echo
+                try {
+                    await eval(
+                        "(async () => {" + programs + "\n" + code + "})()"
+                    );
+                    return "success";
+                } catch (err) {
+                    return err;
                 }
             }
-        }
-        if (!match_line) {
-            return err.message;
-        }
-        let f_line = final_line.match(
-            /\((?<file>.*):(?<line>\d+):(?<pos>\d+)\)/
-        );
-        if (f_line && f_line.groups && fs.existsSync(f_line.groups.file)) {
-            const { file, line, pos } = f_line.groups;
-            const f = fs.readFileSync(file, "utf8").split("\n");
-            // let filename = file.match(/(?<=node_modules\\)(.*)/)[1];
-            let source = file + `:${line}\n${f[line - 1].trim()}\n `;
 
-            const code_source =
-                "at " +
-                code.split("\n")[match_line - 1].trim() +
-                " in your code";
-            return source + err.message + "\n" + code_source;
-        } else if (
-            f_line &&
-            f_line.groups &&
-            f_line.groups.file.includes("<anonymous>")
-        ) {
-            const { file, line, pos } = f_line.groups;
-            let source =
-                "Your code" +
-                `:${match_line}\n${code.split("\n")[match_line - 1].trim()}\n `;
-            let code_source = "";
-            if (line < programs_length) {
-                source =
-                    "In your program code: " +
-                    programs.split("\n")[line - 1].trim() +
-                    "\n";
-                code_source = `at line ${match_line}:${code
-                    .split("\n")
-                    [match_line - 1].trim()} in your code`;
+            function onStuck(posThreshold) {
+                if (req.body.playerRequest) return; // No teleport recovery while visiting players.
+                const currentPos = bot.entity.position;
+                bot.stuckPosList.push(currentPos);
+
+                // Check if the list is full
+                if (bot.stuckPosList.length === 5) {
+                    const oldestPos = bot.stuckPosList[0];
+                    const posDifference = currentPos.distanceTo(oldestPos);
+
+                    if (posDifference < posThreshold) {
+                        teleportBot(); // execute the function
+                    }
+
+                    // Remove the oldest time from the list
+                    bot.stuckPosList.shift();
+                }
             }
-            return source + err.message + "\n" + code_source;
+
+            function teleportBot() {
+                const blocks = bot.findBlocks({
+                    matching: (block) => {
+                        return block.type === 0;
+                    },
+                    maxDistance: 1,
+                    count: 27,
+                });
+
+                if (blocks) {
+                    // console.log(blocks.length);
+                    const randomIndex = Math.floor(
+                        Math.random() * blocks.length
+                    );
+                    const block = blocks[randomIndex];
+                    bot.chat(`/tp @s ${block.x} ${block.y} ${block.z}`);
+                } else {
+                    bot.chat("/tp @s ~ ~1.25 ~");
+                }
+            }
+
+            function handleError(err) {
+                let stack = err.stack;
+                if (!stack) {
+                    return err;
+                }
+                console.log(stack);
+                const final_line = stack.split("\n")[1];
+                const regex = /<anonymous>:(\d+):\d+\)/;
+
+                const programs_length = programs.split("\n").length;
+                let match_line = null;
+                for (const line of stack.split("\n")) {
+                    const match = regex.exec(line);
+                    if (match) {
+                        const line_num = parseInt(match[1]);
+                        if (line_num >= programs_length) {
+                            match_line = line_num - programs_length;
+                            break;
+                        }
+                    }
+                }
+                if (!match_line) {
+                    return err.message;
+                }
+                let f_line = final_line.match(
+                    /\((?<file>.*):(?<line>\d+):(?<pos>\d+)\)/
+                );
+                if (
+                    f_line &&
+                    f_line.groups &&
+                    fs.existsSync(f_line.groups.file)
+                ) {
+                    const { file, line, pos } = f_line.groups;
+                    const f = fs.readFileSync(file, "utf8").split("\n");
+                    // let filename = file.match(/(?<=node_modules\\)(.*)/)[1];
+                    let source = file + `:${line}\n${f[line - 1].trim()}\n `;
+
+                    const code_source =
+                        "at " +
+                        code.split("\n")[match_line - 1].trim() +
+                        " in your code";
+                    return source + err.message + "\n" + code_source;
+                } else if (
+                    f_line &&
+                    f_line.groups &&
+                    f_line.groups.file.includes("<anonymous>")
+                ) {
+                    const { file, line, pos } = f_line.groups;
+                    let source =
+                        "Your code" +
+                        `:${match_line}\n${code
+                            .split("\n")
+                            [match_line - 1].trim()}\n `;
+                    let code_source = "";
+                    if (line < programs_length) {
+                        source =
+                            "In your program code: " +
+                            programs.split("\n")[line - 1].trim() +
+                            "\n";
+                        code_source = `at line ${match_line}:${code
+                            .split("\n")
+                            [match_line - 1].trim()} in your code`;
+                    }
+                    return source + err.message + "\n" + code_source;
+                }
+                return err.message;
+            }
+        });
+    } catch (error) {
+        executionError = error;
+        if (!res.headersSent) {
+            if (error instanceof TaskInterrupted) res.json(stepBot.observe());
+            else res.status(500).json({ error: error.message });
         }
-        return err.message;
+    } finally {
+        lease?.cleanup?.();
+        if (lease?.abort.signal.aborted) await controller.interrupt();
+        if (lease)
+            await controller.finishAction(
+                lease,
+                stepBot.actionResults,
+                executionError
+            );
+    }
+});
+
+app.post("/tasks", async (req, res) => {
+    const controller = bot?.tasks;
+    if (!controller) return res.status(409).json({ error: "Bot not ready" });
+    try {
+        const body = req.body;
+        let result;
+        switch (body.operation || "snapshot") {
+            case "snapshot":
+                result = controller.snapshot();
+                break;
+            case "get":
+                result = controller.get(body.id) || null;
+                break;
+            case "enqueue":
+                result = controller.enqueue(body.request);
+                break;
+            case "claim":
+                result = controller.claim(body.id);
+                break;
+            case "yield":
+                result = controller.yieldTask(body.id, body.generation);
+                break;
+            case "complete":
+                result = controller.complete(
+                    body.id,
+                    body.generation,
+                    body.success,
+                    body.reason
+                );
+                break;
+            default:
+                throw new Error("Unknown task operation");
+        }
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
     }
 });
 
 app.post("/observe", (req, res) => {
-    if (!bot?.entity || !bot.observe) return res.status(409).json({ error: "Bot not spawned" });
+    if (!bot?.entity || !bot.observe)
+        return res.status(409).json({ error: "Bot not spawned" });
     bot.waitTicks = req.body.waitTicks ?? bot.waitTicks;
     res.json(bot.observe());
 });
 
 // Independent of /step: chat remains available while generated actions await work.
 app.post("/chat", (req, res) => {
-    if (!bot?.conversation) return res.status(409).json({ error: "Bot not connected" });
+    if (!bot?.conversation)
+        return res.status(409).json({ error: "Bot not connected" });
     try {
-        if (req.body.text !== undefined) return res.json(bot.conversation.send(req.body));
+        if (req.body.text !== undefined)
+            return res.json(bot.conversation.send(req.body));
         res.json(bot.conversation.snapshot());
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -406,7 +515,8 @@ app.post("/pause", async (req, res) => {
     if (!currentBot) return res.status(400).json({ error: "Bot not spawned" });
     const paused = req.body.paused ?? !currentBot.serverPaused;
     const mode = req.body.mode || currentBot.pauseMode;
-    if (typeof paused !== "boolean") return res.status(400).json({ error: "paused must be boolean" });
+    if (typeof paused !== "boolean")
+        return res.status(400).json({ error: "paused must be boolean" });
     try {
         if (paused !== currentBot.serverPaused) {
             await setPaused(currentBot, mode, paused);

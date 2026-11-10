@@ -1,3 +1,4 @@
+const { parseControl } = require("./tasks");
 const { playerState } = require("./playerState");
 const { randomUUID } = require("node:crypto");
 
@@ -74,6 +75,19 @@ class Conversation {
         const required = channel === "private" || Boolean(this.bot.username && text.toLowerCase().includes(this.bot.username.toLowerCase()));
         const entry = this.record({ sender, text: text.slice(0, 2000), channel, outgoing: false, required });
         if (required) this.pending.set(entry.id, entry);
+        const control = this.bot.tasks && parseControl(text, this.bot.username);
+        if (control) {
+            entry.required = true;
+            this.pending.set(entry.id, entry);
+            entry.control = true;
+            this.bot.tasks.control(control.command, sender, control.id, channel).then(reply => {
+                this.send({ session: this.session, key: `control:${entry.id}`, replyTo: entry.id, text: reply });
+            }).catch(error => {
+                console.error("Task control failed", error);
+                this.send({ session: this.session, key: `control:${entry.id}`, replyTo: entry.id,
+                    text: "I couldn't finish that task control. Please try again." });
+            });
+        }
     }
 
     snapshot() {
@@ -82,7 +96,8 @@ class Conversation {
             playerLocations: playerState(this.bot),
             inventory: (this.bot.inventory?.items() || []).map(item => ({ name: item.name, count: item.count })),
             players: this.players(), noPlayersOnline: this.players().length === 0,
-            events: this.events, history: this.history, pending: [...this.pending.values()],
+            events: this.events, history: this.history, pending: [...this.pending.values()].filter(m => !m.control),
+            taskControl: this.bot.tasks?.snapshot(),
             task: this.task, lastSpoke: this.lastSpoke,
             state: { health: this.bot.health, food: this.bot.food,
                 dimension: this.bot.game?.dimension, position: this.bot.entity?.position, time: this.bot.time?.timeOfDay },

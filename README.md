@@ -266,6 +266,45 @@ Run normally with `python run.py`; no tag or chat command prefix is required.
   public/private channel. Asking a question or discussing a plan need not queue work.
   Active mining/combat is not interrupted mid-action.
 
+Task control is handled directly by the Minecraft bridge, independently of model
+latency. Use an exact command in public chat (optionally addressed to the bot) or
+send it privately:
+
+| Message | Effect |
+| --- | --- |
+| `Voyager, stop` | Cancel the active task and halt new work until resumed. |
+| `pause` | Pause the active task, keeping verified progress, and halt new work. |
+| `resume` | Continue with fresh observations and a new execution generation. |
+| `cancel` / `cancel task <id>` | Cancel the active task or a specific queued task. |
+| `status` / `what are you doing?` | Report visible active work and completed action batches. |
+| `queue` | List visible running, paused and queued tasks with short IDs. |
+
+Replace `Voyager` with the bot's actual username. Only exact controls are handled
+this way; sentences discussing or quoting “stop” are not cancellation commands.
+Private controls receive `/msg` responses. Public status/queue responses exclude
+private task descriptions, including when requested by that task's owner.
+Requesters control their own tasks; `task_operators` in configuration can list
+usernames allowed to control other tasks. Any player can stop autonomous curriculum
+work; only the player who paused/stopped work or an operator can resume that halt.
+These direct controls remain available when the social model is disabled.
+
+Task IDs, requesters, channels, priorities, lifecycle states, action IDs, operation
+states and verified receipts are saved atomically under `<ckpt_dir>/tasks/`.
+Journal files are scoped to the current host, port and login identifier. Reuse the
+same checkpoint and connection settings for task recovery; explicit world identity
+and richer world memory are later roadmap work. Queued work survives restart;
+previously running work returns paused. Resume replans against observations and
+prior receipts, rather than continuing an old JavaScript stack.
+
+Cancellation is cooperative: movement and bounded waits are interrupted; an
+in-flight inventory transaction settles before another operation can start.
+Completed placements/drops are retained. A failed or crash-interrupted inventory
+operation is marked for review and cannot be automatically replayed: inspect the
+inventory, cancel that task, and request only the remaining work. Controls also
+invalidate pending model output and old asynchronous movement callbacks. Arbitrary
+synchronous generated JavaScript that blocks Node's event loop cannot be preempted
+by this controller; helpers and generated programs must remain bounded.
+
 Chat requests now have explicit action helpers:
 
 | Request | Helper | Behavior |

@@ -1,84 +1,52 @@
-function waitForMobRemoved(bot, entity, timeout = 300) {
+function waitForMobOutcome(bot, entity, timeout, ranged) {
     return new Promise((resolve, reject) => {
-        let success = false;
         let droppedItem = null;
-        // Set up timeout
-        const timeoutId = setTimeout(() => {
-            success = false;
-            bot.pvp.stop();
-        }, timeout * 1000);
-
-        // Function to handle entityRemoved event
-        function onEntityGone(e) {
-            if (e === entity) {
-                success = true;
-                clearTimeout(timeoutId);
-                bot.log(`Killed ${entity.name}!`);
-                bot.pvp.stop();
-            }
-        }
-
-        function onItemDrop(item) {
-            if (entity.position.distanceTo(item.position) <= 1) {
+        const signal = bot.taskSignal?.();
+        const stopped = ranged ? "auto_shot_stopped" : "stoppedAttacking";
+        const stop = () => (ranged ? bot.hawkEye.stop() : bot.pvp.stop());
+        const cleanup = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", onAbort);
+            bot.removeListener("entityGone", onGone);
+            bot.removeListener("itemDrop", onDrop);
+            bot.removeListener(stopped, onStopped);
+        };
+        const onAbort = () => {
+            cleanup();
+            stop();
+            const error = new Error("Combat was stopped");
+            error.name = "TaskInterrupted";
+            reject(error);
+        };
+        const onGone = (target) => {
+            if (target !== entity) return;
+            cleanup();
+            stop();
+            resolve(droppedItem);
+        };
+        const onDrop = (item) => {
+            if (entity.position.distanceTo(item.position) <= 1)
                 droppedItem = item;
-            }
-        }
-
-        function onStoppedAttacking() {
-            clearTimeout(timeoutId);
-            bot.removeListener("entityGone", onEntityGone);
-            bot.removeListener("stoppedAttacking", onStoppedAttacking);
-            bot.removeListener("itemDrop", onItemDrop);
-            if (!success) reject(new Error(`Failed to kill ${entity.name}.`));
-            else resolve(droppedItem);
-        }
-
-        // Listen for entityRemoved event
-        bot.on("entityGone", onEntityGone);
-        bot.on("stoppedAttacking", onStoppedAttacking);
-        bot.on("itemDrop", onItemDrop);
+        };
+        const onStopped = () => {
+            cleanup();
+            reject(new Error(`Failed to defeat ${entity.name}`));
+        };
+        const timer = setTimeout(() => {
+            cleanup();
+            stop();
+            reject(new Error(`Timed out defeating ${entity.name}`));
+        }, timeout * 1000);
+        bot.on("entityGone", onGone);
+        bot.on("itemDrop", onDrop);
+        bot.on(stopped, onStopped);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
     });
 }
-
-
+function waitForMobRemoved(bot, entity, timeout = 300) {
+    return waitForMobOutcome(bot, entity, timeout, false);
+}
 function waitForMobShot(bot, entity, timeout = 300) {
-    return new Promise((resolve, reject) => {
-        let success = false;
-        let droppedItem = null;
-        // Set up timeout
-        const timeoutId = setTimeout(() => {
-            success = false;
-            bot.hawkEye.stop();
-        }, timeout * 1000);
-
-        // Function to handle entityRemoved event
-        function onEntityGone(e) {
-            if (e === entity) {
-                success = true;
-                clearTimeout(timeoutId);
-                bot.log(`Shot ${entity.name}!`);
-                bot.hawkEye.stop();
-            }
-        }
-
-        function onItemDrop(item) {
-            if (entity.position.distanceTo(item.position) <= 1) {
-                droppedItem = item;
-            }
-        }
-
-        function onAutoShotStopped() {
-            clearTimeout(timeoutId);
-            bot.removeListener("entityGone", onEntityGone);
-            bot.removeListener("auto_shot_stopped", onAutoShotStopped);
-            bot.removeListener("itemDrop", onItemDrop);
-            if (!success) reject(new Error(`Failed to shoot ${entity.name}.`));
-            else resolve(droppedItem);
-        }
-
-        // Listen for entityRemoved event
-        bot.on("entityGone", onEntityGone);
-        bot.on("auto_shot_stopped", onAutoShotStopped);
-        bot.on("itemDrop", onItemDrop);
-    });
+    return waitForMobOutcome(bot, entity, timeout, true);
 }

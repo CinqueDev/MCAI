@@ -12,13 +12,16 @@ async function waitForItem(bot, names, count = 1, timeoutMs = 30000) {
     bot.pathfinder.setGoal(null);
     bot.clearControlStates();
     while (Date.now() < deadline) {
+        bot.checkTask?.();
         const received = total() - before;
         if (received >= count) {
             const result = { type: "receive", items: [...names], count: received, verified: true };
             (bot.actionResults ||= []).push(result);
             return result;
         }
-        await new Promise(resolve => setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))));
+        const delay = Math.min(250, Math.max(1, deadline - Date.now()));
+        if (bot.taskSleep) await bot.taskSleep(delay);
+        else await new Promise(resolve => setTimeout(resolve, delay));
     }
     throw new Error(`Waited for ${names.join(" or ")}, but no sufficient inventory increase was observed`);
 }

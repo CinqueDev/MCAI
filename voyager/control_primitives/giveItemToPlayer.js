@@ -10,6 +10,7 @@ async function giveItemToPlayer(bot, username, name, count = 1) {
     }
     await bot.lookAt(player.entity.position.offset(0, 1, 0));
     const dropped = await dropItem(bot, name, count);
+    bot.checkTask?.();
     const result = { ...dropped, type: "give", player: player.username, pickupConfirmed: false };
     (bot.actionResults ||= []).push(result);
     return result; // Verified drop near the player, not proof they picked it up.

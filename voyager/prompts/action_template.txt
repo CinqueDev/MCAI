@@ -44,7 +44,7 @@ Code:
     6) Call `bot.log` for internal progress and diagnostics. Player conversation is handled by a separate social agent; do not send public/private messages, register chat listeners, or use commands to chat from action code. Legacy non-command `bot.chat` calls are internal diagnostics. Respect player-owned builds and storage; do not alter them without an explicit request.
     7) Use `exploreUntil(bot, direction, maxDistance, callback)` when you cannot find something. You should frequently call this before mining blocks or killing mobs. You should select a direction at random every time instead of constantly using (1, 0, 1).
     8) `maxDistance` should always be 32 for `bot.findBlocks` and `bot.findBlock`. Do not cheat.
-    9) Do not write infinite loops or recursive functions.
+    9) Do not write infinite loops or recursive functions. Perform inventory and world mutations sequentially; do not run them in Promise.all or detach them with timers. Use `bot.checkTask()` at batch/loop boundaries and `await bot.taskSleep(ms)` for bounded delays. Propagate task interruption errors; do not catch them and retry work after cancellation. The execution controller owns stop/pause/resume and rejects stale actions.
     10) Do not use `bot.on` or `bot.once` to register event listeners. You definitely do not need them.
     11) Name your function in a meaningful way (can infer the task from the name).
     12) Before crafting a tool, budget ingredients for the whole sequence, including planks consumed by sticks and a crafting table. The count in craftItem is recipe executions, not output items: one log makes four planks, and one stick recipe consumes two planks and makes four sticks. Gather additional logs if needed.

@@ -56,6 +56,8 @@ If can_queue_task is false, explain that the queue is full and leave task null.
 If queuing a task, say it will be attempted after the current action finishes. You may also ask a
 clarifying question and leave task null. Avoid duplicate tasks already in context.
 
+Exact stop/cancel/pause/resume/status/queue controls are handled immediately by the task controller. Do not turn them into new work requests.
+
 Return ONLY JSON with keys: reply (string or null), memory (list of strings),
 quiet_seconds (number, usually 0), task (string or null), requester (actual username
 whose new message requests the task, or null). No code or commands.
@@ -63,7 +65,7 @@ whose new message requests the task, or null). No code or commands.
 
 
 class ConversationWorker:
-    def __init__(self, env, *, llm=None, ckpt_dir="ckpt", **llm_options):
+    def __init__(self, env, *, llm=None, ckpt_dir="ckpt", task_client=None, **llm_options):
         self.env = env
         self.llm = llm or DeepSeekChat(**llm_options)
         self.path = Path(ckpt_dir) / "conversation" / "memory.json"
@@ -73,6 +75,7 @@ class ConversationWorker:
                 self.memory = {}
         except (OSError, ValueError):
             self.memory = {}
+        self.task_client = task_client
         self.tasks = Queue(maxsize=20)
         self.results = Queue()
         self.stop_event = threading.Event()
@@ -138,7 +141,7 @@ class ConversationWorker:
             self.respond(snapshot, message)
             self.cursor = max(self.cursor, message["id"])
             return
-        public_new = any(m["id"] > self.cursor and not m["outgoing"] and m["channel"] == "public"
+        public_new = any(not m.get("control") and m["id"] > self.cursor and not m["outgoing"] and m["channel"] == "public"
                          for m in snapshot["history"])
         now = time.monotonic()
         if (snapshot["players"] and now >= self.quiet_until and
@@ -158,13 +161,12 @@ class ConversationWorker:
         # Keep private exchanges out of public prompts even when pending concurrently.
         context = {k: snapshot.get(k) for k in ("username", "players", "noPlayersOnline", "state", "task", "events", "playerLocations", "inventory")}
         context.update(history=history[-40:],
-                       new_messages=[m for m in history if m["id"] > self.cursor and not m["outgoing"]],
+                       new_messages=[m for m in history if m["id"] > self.cursor and not m["outgoing"] and not m.get("control")],
                        required_message=message,
                        reply_channel="private" if private else "public",
                        memory=self.memory.get(scope, []),
-                       queued_tasks=[], can_queue_task=not self.tasks.full())
-        with self.tasks.mutex:
-            context["queued_tasks"] = list(self.tasks.queue)
+                       queued_tasks=[], can_queue_task=not self.queue_full())
+        context["queued_tasks"] = self.queued_tasks()
         current = context.get("task")
         if isinstance(current, dict):
             context["task"] = current.get("description") if current.get("recipient") in (None, sender) else "Working on a private request"
@@ -184,7 +186,12 @@ class ConversationWorker:
             log.exception("Could not generate conversation reply")
             decision = {}
             reply = "I'm having trouble thinking right now. Could you try again in a moment?" if message else None
-        if decision.get("task") and self.tasks.full():
+        revision = (snapshot.get("taskControl") or {}).get("revision")
+        if decision.get("task") and self.task_client and self.task_client.snapshot().get("revision") != revision:
+            decision["task"] = None
+            reply = "Work state changed while I was thinking. Please repeat the request if you still want me to do it."
+        decision["_task_revision"] = revision
+        if decision.get("task") and self.queue_full():
             decision["task"] = None
             reply = "My task queue is full right now. Please ask again after I finish some work."
         if message and (not reply or not reply.strip()):
@@ -244,25 +251,42 @@ class ConversationWorker:
             elif quiet == -1:
                 self.quiet_until = 0
         task = decision.get("task")
-        if isinstance(task, str) and task.strip() and not self.tasks.full():
+        if isinstance(task, str) and task.strip() and not self.queue_full():
             entry = {"task": task[:1000], "recipient": recipient}
             if requester:
                 entry["requester"] = requester
-            with self.tasks.mutex:
-                duplicate = entry in self.tasks.queue
-            if not duplicate:
-                self.tasks.put_nowait(entry)
+            if self.task_client:
+                self.task_client.enqueue({**entry, "expectedRevision": decision.get("_task_revision")})
+            else:
+                with self.tasks.mutex:
+                    duplicate = entry in self.tasks.queue
+                if not duplicate:
+                    self.tasks.put_nowait(entry)
+
+    def queued_tasks(self):
+        if self.task_client:
+            return self.task_client.queued()
+        with self.tasks.mutex:
+            return list(self.tasks.queue)
+
+    def queue_full(self):
+        return len(self.queued_tasks()) >= 20
 
     def has_tasks(self):
-        return not self.tasks.empty()
+        queued = self.queued_tasks()
+        return any(t.get("requester") or t.get("priority", 100) > 0 for t in queued) if self.task_client else bool(queued)
 
     def pop_task(self):
+        if self.task_client:
+            return self.task_client.claim()
         try:
             return self.tasks.get_nowait()
         except Empty:
             return None
 
     def report_task(self, request, success, reason=""):
+        if request.get("state") in ("cancelled", "paused"):
+            return
         self.results.put({"recipient": request["recipient"],
                           "text": ("Finished: " if success else "I couldn't finish: ") + request["task"]
                           + ((" — " + reason[:300]) if reason and not success else "")})

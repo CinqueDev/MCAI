@@ -17,7 +17,8 @@ async function moveToPlayer(bot, username, range = 2, timeoutMs = 30000) {
         const current = player.entity;
         if (current && current.isValid !== false && bot.entity.position.distanceTo(current.position) <= range + 0.75) {
             await bot.lookAt(current.position.offset(0, 1.4, 0));
-            const result = { type: "approach_player", player: player.username,
+            bot.checkTask?.();
+    const result = { type: "approach_player", player: player.username,
                 position: bot.entity.position.clone(), target: current.position.clone(), range, verified: true };
             (bot.actionResults ||= []).push(result);
             return result;

@@ -46,6 +46,7 @@ async function moveToPosition(bot, position, range = 1, timeoutMs = 30000) {
     if (!goal.isEnd(bot.entity.position.floored())) {
         throw new Error("Navigation ended without reaching the destination");
     }
+    bot.checkTask?.();
     const result = { type: "move", destination: { x: position.x, y: position.y, z: position.z },
         range, position: bot.entity.position.clone(), verified: true };
     (bot.actionResults ||= []).push(result);

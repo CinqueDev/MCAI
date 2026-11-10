@@ -1,4 +1,7 @@
 import copy
+import hashlib
+import logging
+from pathlib import Path
 import json
 import time
 from typing import Dict
@@ -59,6 +62,7 @@ class Voyager:
         mc_profiles_folder: str = ".minecraft-auth",
         mc_pause_mode: str = "auto",
         chat_enabled: bool = True,
+        task_operators=None,
     ):
         """
         The main class for Voyager.
@@ -142,6 +146,12 @@ class Voyager:
             server_port=server_port,
             request_timeout=env_request_timeout,
         )
+        identity = f"{self.env.mc_host}:{self.env.mc_port}:{self.env.mc_auth}:{self.env.mc_username}"
+        journal_key = hashlib.sha256(identity.encode()).hexdigest()[:16]
+        self.env.task_journal_path = str(Path(ckpt_dir).resolve() / "tasks" / f"{journal_key}.json")
+        self.env.task_operators = task_operators or []
+        self.task_controller = self.env.tasks
+        self.active_task = None
         self.env_wait_ticks = env_wait_ticks
         self.reset_placed_if_failed = reset_placed_if_failed
         self.max_iterations = max_iterations
@@ -159,7 +169,7 @@ class Voyager:
             execution_error=action_agent_show_execution_error,
         )
         self.conversation = ConversationWorker(
-            self.env, ckpt_dir=ckpt_dir, model_name=action_agent_model_name,
+            self.env, ckpt_dir=ckpt_dir, task_client=self.task_controller, model_name=action_agent_model_name,
             temperature=0.7, request_timeout=min(request_timeout, 30),
             api_key=api_key, base_url=deepseek_base_url,
         )
@@ -250,10 +260,29 @@ class Voyager:
     def close(self):
         self.env.close()
 
+    def _control_result(self):
+        controller = getattr(self, "task_controller", None)
+        active = getattr(self, "active_task", None)
+        if not controller or not active:
+            return None
+        record = controller.get(active["id"])
+        if not record or record["state"] != "running" or record.get("needsReview"):
+            return {"task": self.task, "success": False, "controlled": True,
+                    "state": record["state"] if record else "cancelled", "interrupted": True}
+        self.active_task = record
+        self.env.execution = {"id": record["id"], "generation": record["generation"]}
+        return None
+
     def step(self):
         if self.action_agent_rollout_num_iter < 0:
             raise ValueError("Agent must be reset before stepping")
+        controlled = self._control_result()
+        if controlled:
+            return self.messages, 0, False, controlled
         ai_message = self.action_agent.llm(self.messages)
+        controlled = self._control_result()
+        if controlled:
+            return self.messages, 0, False, controlled
         print(f"\033[34m****Action Agent ai message****\n{ai_message.content}\033[0m")
         self.conversations.append(
             (self.messages[0].content, self.messages[1].content, ai_message.content)
@@ -268,6 +297,10 @@ class Voyager:
                 programs=self.skill_manager.programs,
             )
             self.recorder.record(events, self.task)
+            self.last_events = copy.deepcopy(events)
+            controlled = self._control_result()
+            if controlled:
+                return self.messages, 0, False, controlled
             self.action_agent.update_chest_memory(events[-1][1]["nearbyChests"])
             success, critique = self.critic_agent.check_task_success(
                 events=events,
@@ -276,6 +309,10 @@ class Voyager:
                 chest_observation=self.action_agent.render_chest_observation(),
                 max_retries=5,
             )
+
+            controlled = self._control_result()
+            if controlled:
+                return self.messages, 0, False, controlled
 
             if not critique:
                 critique = "; ".join(str(event["onError"]) for kind, event in events if kind == "onError")
@@ -341,14 +378,39 @@ class Voyager:
         return self.messages, 0, done, info
 
     def rollout(self, *, task, context, reset_env=True):
+        controller = getattr(self, "task_controller", None)
+        if controller:
+            record = controller.begin(task, context, getattr(self, "requested_task_id", None))
+            if not record:
+                return self.messages, 0, False, {"task": task, "success": False, "interrupted": True}
+            self.active_task = record
+            self.env.execution = {"id": record["id"], "generation": record["generation"]}
         self.reset(task=task, context=context, reset_env=reset_env)
         while True:
             messages, reward, done, info = self.step()
+            if info.get("controlled"):
+                record = controller.wait_running(self.active_task["id"])
+                if not record or record["state"] != "running":
+                    info["state"] = record["state"] if record else "cancelled"
+                    break
+                self.active_task = record
+                self.env.execution = {"id": record["id"], "generation": record["generation"]}
+                self.reset(task=task, context=context + " Recheck prior action receipts and the live world before continuing. Never repeat an uncertain item operation.", reset_env=False)
+                continue
             if done:
                 break
             if not self.env.player_request and self.conversation.has_tasks():
                 info["interrupted"] = True
                 break
+        if controller:
+            record = self.active_task
+            if info.get("interrupted") and not info.get("controlled"):
+                controller.yield_task(record)
+            elif not info.get("controlled"):
+                if not controller.complete(record, info["success"], info.get("critique", "Yielded to player request")):
+                    info.update(controlled=True, interrupted=True, success=False)
+            self.env.execution = None
+            self.active_task = None
         return messages, reward, done, info
 
     def learn(self, reset_env=True):
@@ -375,13 +437,17 @@ class Voyager:
             if self.recorder.iteration > self.max_iterations:
                 print("Iteration limit reached")
                 break
+            if getattr(self, "task_controller", None):
+                self.task_controller.wait_ready()
             request = self.conversation.pop_task()
-            self.env.player_request = request is not None
+            self.requested_task_id = request.get("id") if request else None
+            self.env.player_request = bool(request and (request.get("requester") or "id" not in request))
             self.env.task_recipient = request["recipient"] if request else None
             if request:
                 task = request["task"]
                 requester = request.get("requester", "the player identified in the task")
-                context = f"Explicit request from {requester}: {task}. Resolve me/my/here relative to this requester. Respect player property and storage."
+                context = (f"Explicit request from {requester}: {task}. Resolve me/my/here relative to this requester. Respect player property and storage."
+                           if self.env.player_request else request.get("context", ""))
             else:
                 task, context = self.curriculum_agent.propose_next_task(
                     events=self.last_events,
@@ -403,6 +469,13 @@ class Voyager:
                     "task": task,
                     "success": False,
                 }
+                if self.active_task:
+                    try:
+                        self.task_controller.complete(self.active_task, False, str(e))
+                    except Exception:
+                        logging.getLogger(__name__).warning("Could not finalize task after bridge failure; journal recovery will pause it")
+                    self.active_task = None
+                    self.env.execution = None
                 # reset bot status here
                 self.last_events = self.env.reset(
                     options={
@@ -417,7 +490,7 @@ class Voyager:
                 print("Your last round rollout terminated due to error:")
                 print(f"\033[41m{e}\033[0m")
 
-            if request:
+            if request and self.env.player_request and not info.get("controlled"):
                 if info.get("critique"):
                     self.conversation.report_task(request, info["success"], info["critique"])
                 else:
@@ -465,20 +538,28 @@ class Voyager:
         self.curriculum_agent.failed_tasks = []
         self.last_events = self.env.step("")
         while self.curriculum_agent.progress < len(sub_goals):
-            next_task = sub_goals[self.curriculum_agent.progress]
-            context = self.curriculum_agent.get_task_context(next_task)
-            print(
-                f"\033[35mStarting task {next_task} for at most {self.action_agent_task_max_retries} times\033[0m"
-            )
+            if getattr(self, "task_controller", None):
+                self.task_controller.wait_ready()
+            request = self.conversation.pop_task()
+            self.requested_task_id = request.get("id") if request else None
+            self.env.player_request = bool(request and request.get("requester"))
+            self.env.task_recipient = request.get("recipient") if request else None
+            expected_task = sub_goals[self.curriculum_agent.progress]
+            next_task = request["task"] if request else expected_task
+            context = request.get("context", "") if request else self.curriculum_agent.get_task_context(next_task)
+            if self.env.player_request:
+                context = f"Explicit request from {request['requester']}: {next_task}. Respect player property and storage."
             messages, reward, done, info = self.rollout(
-                task=next_task,
-                context=context,
-                reset_env=reset_env,
+                task=next_task, context=context, reset_env=reset_env,
             )
-            self.curriculum_agent.update_exploration_progress(info)
-            print(
-                f"\033[35mCompleted tasks: {', '.join(self.curriculum_agent.completed_tasks)}\033[0m"
-            )
-            print(
-                f"\033[35mFailed tasks: {', '.join(self.curriculum_agent.failed_tasks)}\033[0m"
-            )
+            if info.get("controlled"):
+                return info
+            if info.get("interrupted"):
+                continue
+            if request and self.env.player_request:
+                self.conversation.report_task(request, info["success"], info.get("critique", ""))
+            # Incidental chat work must not advance the specified subgoal list.
+            if not request or (not request.get("requester") and next_task == expected_task):
+                self.curriculum_agent.update_exploration_progress(info)
+            print(f"Completed tasks: {', '.join(self.curriculum_agent.completed_tasks)}")
+            print(f"Failed tasks: {', '.join(self.curriculum_agent.failed_tasks)}")

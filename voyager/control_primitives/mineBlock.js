@@ -1,4 +1,5 @@
 async function mineBlock(bot, name, count = 1) {
+    bot.checkTask?.();
     // return if name is not string
     if (typeof name !== "string") {
         throw new Error(`name for mineBlock must be a string`);

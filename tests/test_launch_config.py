@@ -47,7 +47,7 @@ class LaunchConfigTests(unittest.TestCase):
 
     def test_invalid_settings_fail_before_launch(self):
         for values in [{"mc_port": True}, {"mc_port": 70000}, {"resume": "false"},
-                       {"chat_enabled": "false"}, {"mc_version": 26.1}, {"mc_auth": "bad"},
+                       {"chat_enabled": "false"}, {"task_operators": "Alice"}, {"task_operators": ["bad name"]}, {"mc_version": 26.1}, {"mc_auth": "bad"},
                        {"mc_auth": "microsoft"}, {"mc_pause_mode": "bad"},
                        {"deepseek_api_key": "do-not-print-this"}]:
             with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:

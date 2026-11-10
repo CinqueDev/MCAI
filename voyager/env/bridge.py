@@ -1,4 +1,5 @@
 import os.path
+from voyager.tasks import TaskClient
 import re
 import time
 import warnings
@@ -85,6 +86,10 @@ class VoyagerEnv(gym.Env):
         self.current_task = None
         self.task_recipient = None
         self.player_request = False
+        self.execution = None
+        self.tasks = TaskClient(self)
+        self.task_journal_path = None
+        self.task_operators = []
         self.connected = False
         self.server_paused = False
 
@@ -158,6 +163,7 @@ class VoyagerEnv(gym.Env):
             "code": code,
             "programs": programs,
             "playerRequest": self.player_request,
+            "execution": self.execution,
             "task": {"description": self.current_task, "recipient": self.task_recipient},
         }
         res = requests.post(
@@ -204,6 +210,8 @@ class VoyagerEnv(gym.Env):
             "version": self.mc_version,
             "profilesFolder": self.mc_profiles_folder,
             "pauseMode": self.mc_pause_mode,
+            "taskJournalPath": self.task_journal_path,
+            "taskOperators": self.task_operators,
             "reset": options.get("mode", "hard"),
             "inventory": options.get("inventory", {}),
             "equipment": options.get("equipment", []),

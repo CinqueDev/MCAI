@@ -17,6 +17,7 @@ class Status extends Observation {
             players: playerState(this.bot),
             dimension: this.bot.game.dimension,
             actionResults: this.bot.actionResults || [],
+            taskControl: this.bot.tasks ? { suspended: this.bot.tasks.suspended, active: this.bot.tasks.active() || null } : null,
             health: this.bot.health,
             food: this.bot.food,
             saturation: this.bot.foodSaturation,

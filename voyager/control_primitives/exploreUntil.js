@@ -41,7 +41,14 @@ async function exploreUntil(
         let explorationInterval;
         let maxTimeTimeout;
 
+        const signal = bot.taskSignal?.();
+        const onAbort = () => {
+            cleanUp();
+            const error = new Error("Exploration was stopped"); error.name = "TaskInterrupted";
+            reject(error);
+        };
         const cleanUp = () => {
+            signal?.removeEventListener("abort", onAbort);
             clearInterval(explorationInterval);
             clearTimeout(maxTimeTimeout);
             bot.pathfinder.setGoal(null);
@@ -76,6 +83,8 @@ async function exploreUntil(
             }
         };
 
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) return onAbort();
         explorationInterval = setInterval(explore, 2000);
 
         maxTimeTimeout = setTimeout(() => {

@@ -13,21 +13,25 @@ function inject(bot) {
             return;
         }
         let timeout = null;
-        await Promise.race([
-            bot._fish(),
-            new Promise(
-                (resolve, reject) =>
-                    (timeout = setTimeout(() => {
-                        bot.activateItem();
-                        reject(
-                            new Error(
-                                "Finishing timeout, make sure you get to and look at a water block!"
-                            )
-                        );
-                    }, 60000))
-            ),
-        ]);
-        clearTimeout(timeout);
+        try {
+            const fishing = Promise.race([
+                bot._fish(),
+                new Promise(
+                    (resolve, reject) =>
+                        (timeout = setTimeout(() => {
+                            bot.activateItem();
+                            reject(
+                                new Error(
+                                    "Finishing timeout, make sure you get to and look at a water block!"
+                                )
+                            );
+                        }, 60000))
+                ),
+            ]);
+            await (bot.taskAwait ? bot.taskAwait(fishing) : fishing);
+        } finally {
+            clearTimeout(timeout);
+        }
         await bot.waitForTicks(20);
     };
 

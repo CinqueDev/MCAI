@@ -8,5 +8,6 @@
   "mc_profiles_folder": ".minecraft-auth",
   "ckpt_dir": "ckpt",
   "resume": false,
-  "chat_enabled": true
+  "chat_enabled": true,
+  "task_operators": []
 }

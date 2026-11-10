@@ -1,4 +1,5 @@
 async function killMob(bot, mobName, timeout = 300) {
+    bot.checkTask?.();
     // return if mobName is not string
     if (typeof mobName !== "string") {
         throw new Error(`mobName for killMob must be a string`);

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 # Bootstrap before importing third-party packages such as dotenv or Voyager.
@@ -27,6 +28,7 @@ DEFAULTS = {
     "ckpt_dir": "ckpt",
     "resume": False,
     "chat_enabled": True,
+    "task_operators": [],
 }
 
 
@@ -44,6 +46,7 @@ def parse_settings(argv=None):
     parser.add_argument("--mc-pause-mode", choices=("auto", "none", "mod", "tick"),
                         default=argparse.SUPPRESS)
     parser.add_argument("--ckpt-dir", default=argparse.SUPPRESS)
+    parser.add_argument("--task-operators", nargs="+", default=argparse.SUPPRESS, help="Minecraft usernames allowed to control other players tasks")
     parser.add_argument("--chat-enabled", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
     parser.add_argument("--resume", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
     overrides = vars(parser.parse_args(argv))
@@ -65,6 +68,8 @@ def parse_settings(argv=None):
     settings = {**DEFAULTS, **config, **overrides}
     if type(settings["mc_port"]) is not int or not 1 <= settings["mc_port"] <= 65535:
         parser.error("Set mc_port to an integer from 1 to 65535 in config.json or use --mc-port")
+    if not isinstance(settings["task_operators"], list) or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,16}", name) for name in settings["task_operators"]):
+        parser.error("task_operators must be a list of Minecraft usernames")
     if type(settings["chat_enabled"]) is not bool:
         parser.error("chat_enabled must be a JSON boolean (true or false)")
     if type(settings["resume"]) is not bool:

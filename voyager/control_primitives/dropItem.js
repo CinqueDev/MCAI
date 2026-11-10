@@ -8,6 +8,7 @@ async function dropItem(bot, name, count = 1) {
     let failure;
     try {
         for (const stack of stacks) {
+            bot.checkTask?.();
             const amount = Math.min(remaining, stack.count);
             await bot.toss(stack.type, stack.metadata, amount);
             remaining -= amount;
@@ -22,6 +23,7 @@ async function dropItem(bot, name, count = 1) {
             observedInventoryDecrease: before - after, before, after, verified: false });
         throw new Error(`Drop incomplete or unconfirmed: inventory decreased by ${before - after} of ${count} ${name}. Inspect this attempt before dropping any remaining items. ${failure?.message || ""}`);
     }
+    bot.checkTask?.();
     const result = { type: "drop", item: name, count, before, after,
         position: bot.entity.position.clone(), verified: true };
     (bot.actionResults ||= []).push(result);

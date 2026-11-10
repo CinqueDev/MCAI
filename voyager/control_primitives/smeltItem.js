@@ -1,4 +1,5 @@
 async function smeltItem(bot, itemName, fuelName, count = 1) {
+    bot.checkTask?.();
     // return if itemName or fuelName is not string
     if (typeof itemName !== "string" || typeof fuelName !== "string") {
         throw new Error("itemName or fuelName for smeltItem must be a string");
@@ -29,6 +30,7 @@ async function smeltItem(bot, itemName, fuelName, count = 1) {
     const furnace = await bot.openFurnace(furnaceBlock);
     let success_count = 0;
     for (let i = 0; i < count; i++) {
+        bot.checkTask?.();
         if (!bot.inventory.findInventoryItem(item.id, null)) {
             bot.log(`No ${itemName} to smelt in inventory`);
             break;

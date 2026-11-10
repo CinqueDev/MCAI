@@ -11,7 +11,8 @@ async function placeItem(bot, name, position) {
     const existing = bot.blockAt(position);
     if (!existing) throw new Error("Destination chunk is not loaded");
     if (existing.name === name) {
-        const result = { type: "place", block: name, position, alreadyPresent: true, verified: true };
+        bot.checkTask?.();
+    const result = { type: "place", block: name, position, alreadyPresent: true, verified: true };
         (bot.actionResults ||= []).push(result);
         return result;
     }
@@ -47,6 +48,7 @@ async function placeItem(bot, name, position) {
         bot.setControlState("sneak", sneaking);
     }
     if (bot.blockAt(position)?.name !== name) throw new Error(`Placement of ${name} at ${position} was not confirmed`);
+    bot.checkTask?.();
     const result = { type: "place", block: name, position, alreadyPresent: false, verified: true };
     (bot.actionResults ||= []).push(result);
     bot.save(`${name}_placed`);

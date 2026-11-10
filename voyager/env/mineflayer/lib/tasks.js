@@ -1,0 +1,634 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const { randomUUID } = require("node:crypto");
+const { AsyncLocalStorage } = require("node:async_hooks");
+
+class TaskInterrupted extends Error {
+    constructor(message = "Task was stopped or paused") {
+        super(message);
+        this.name = "TaskInterrupted";
+    }
+}
+
+class TaskController {
+    constructor(bot, { journalPath = null, operators = [] } = {}) {
+        this.bot = bot;
+        this.path = journalPath;
+        this.operators = operators.map((name) => name.toLowerCase());
+        this.context = new AsyncLocalStorage();
+        this.atomicContext = new AsyncLocalStorage();
+        this.lease = null;
+        this.cleanupCount = 0;
+        this.revision = 0;
+        this.records = [];
+        this.suspended = false;
+        this.suspendOwner = null;
+        if (this.path && fs.existsSync(this.path)) {
+            const data = JSON.parse(fs.readFileSync(this.path, "utf8"));
+            if (data.version !== 1 || !Array.isArray(data.tasks))
+                throw new Error("Unsupported task journal");
+            this.records = data.tasks;
+            this.revision = (data.revision || 0) + 1;
+            this.suspended = Boolean(data.suspended);
+            this.suspendOwner = data.suspendOwner || null;
+            for (const task of this.records) {
+                if (task.state === "running") {
+                    task.state = "paused";
+                    task.generation++;
+                    task.recovery = true;
+                    task.needsReview = task.actions.some((a) =>
+                        a.operations?.some(
+                            (o) =>
+                                ["started", "uncertain"].includes(o.state) &&
+                                o.irreversible
+                        )
+                    );
+                    this.suspended = true;
+                }
+            }
+        }
+        this.save();
+    }
+
+    save() {
+        if (!this.path) return;
+        fs.mkdirSync(path.dirname(this.path), { recursive: true });
+        const temporary = this.path + ".tmp";
+        fs.writeFileSync(
+            temporary,
+            JSON.stringify(
+                {
+                    version: 1,
+                    revision: this.revision,
+                    suspended: this.suspended,
+                    suspendOwner: this.suspendOwner,
+                    tasks: this.records,
+                },
+                null,
+                2
+            ),
+            { mode: 0o600 }
+        );
+        fs.renameSync(temporary, this.path);
+    }
+
+    get(id) {
+        return this.records.find((t) => t.id === id);
+    }
+    active() {
+        return this.records.find((t) =>
+            ["running", "paused"].includes(t.state)
+        );
+    }
+    snapshot() {
+        return {
+            revision: this.revision,
+            busy: Boolean(this.lease || this.cleanupCount),
+            suspended: this.suspended,
+            active: this.active() || null,
+            tasks: this.records,
+        };
+    }
+    enqueue({
+        task,
+        requester = null,
+        recipient = null,
+        context = "",
+        priority = 100,
+        key = null,
+        expectedRevision = null,
+    }) {
+        if (expectedRevision !== null && expectedRevision !== this.revision)
+            return null;
+        if (typeof task !== "string" || !task.trim())
+            throw new Error("Task description is required");
+        if (requester !== null && !/^[A-Za-z0-9_]{1,16}$/.test(requester))
+            throw new Error("Invalid requester");
+        if (recipient !== null && recipient !== requester)
+            throw new Error("Private tasks must belong to their recipient");
+        if (key) {
+            const existing = this.records.find((t) => t.key === key);
+            if (existing) return existing;
+        }
+        const duplicate = this.records.find(
+            (t) =>
+                ["queued", "running", "paused"].includes(t.state) &&
+                t.task === task &&
+                t.requester === requester &&
+                t.recipient === recipient
+        );
+        if (duplicate) return duplicate;
+        if (this.records.filter((t) => t.state === "queued").length >= 20)
+            throw new Error("Task queue is full");
+        const record = {
+            id: randomUUID(),
+            key,
+            task: task.slice(0, 2000),
+            requester,
+            recipient,
+            context,
+            priority,
+            state: "queued",
+            generation: 0,
+            actions: [],
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+        };
+        this.records.push(record);
+        this.save();
+        return record;
+    }
+
+    claim(id = null) {
+        if (this.suspended || this.active()) return null;
+        const record = id
+            ? this.get(id)
+            : this.records
+                  .filter((t) => t.state === "queued")
+                  .sort((a, b) => b.priority - a.priority)[0];
+        if (!record || record.state !== "queued") return null;
+        record.state = "running";
+        record.generation++;
+        record.updated = new Date().toISOString();
+        this.save();
+        return record;
+    }
+
+    complete(id, generation, success, reason = "") {
+        const record = this.get(id);
+        if (
+            !record ||
+            record.state !== "running" ||
+            record.generation !== generation
+        )
+            return false;
+        record.state = success ? "completed" : "failed";
+        record.reason = reason;
+        record.updated = new Date().toISOString();
+        this.save();
+        return true;
+    }
+
+    yieldTask(id, generation) {
+        const record = this.get(id);
+        if (
+            !record ||
+            record.state !== "running" ||
+            record.generation !== generation
+        )
+            return false;
+        record.state = "queued";
+        record.generation++;
+        this.save();
+        return true;
+    }
+
+    owns(record, sender) {
+        return (
+            !record.requester ||
+            record.requester.toLowerCase() === sender.toLowerCase() ||
+            this.operators.includes(sender.toLowerCase())
+        );
+    }
+
+    async control(command, sender, id = null, channel = "public") {
+        let record;
+        if (id) {
+            const matches = this.records.filter((t) => t.id.startsWith(id));
+            if (matches.length !== 1)
+                return "That task ID is unknown or ambiguous.";
+            record = matches[0];
+        } else record = this.active();
+        if (command === "status" || command === "queue") {
+            const visible = this.records.filter(
+                (t) =>
+                    (!t.recipient ||
+                        (channel === "private" &&
+                            t.requester?.toLowerCase() ===
+                                sender.toLowerCase())) &&
+                    (command === "queue"
+                        ? ["queued", "paused", "running"].includes(t.state)
+                        : t.id === record?.id)
+            );
+            if (
+                !visible.length &&
+                record?.recipient &&
+                command === "status" &&
+                channel === "public"
+            )
+                return "A private task is active. Ask privately for its status.";
+            return visible.length
+                ? visible
+                      .map(
+                          (t) =>
+                              `${t.id.slice(0, 8)}: ${t.state} — ${t.task} (${
+                                  t.actions.filter(
+                                      (a) => a.state === "completed"
+                                  ).length
+                              } action batches)`
+                      )
+                      .join("; ")
+                : this.suspended
+                ? "Work is stopped. Say resume to continue."
+                : "No active tasks.";
+        }
+        if (
+            command === "resume" &&
+            this.suspendOwner &&
+            this.suspendOwner.toLowerCase() !== sender.toLowerCase() &&
+            !this.operators.includes(sender.toLowerCase())
+        )
+            return "Only the player who paused or stopped work or a configured task operator can resume it.";
+        if (
+            !record &&
+            this.suspendOwner &&
+            this.suspendOwner.toLowerCase() !== sender.toLowerCase() &&
+            !this.operators.includes(sender.toLowerCase())
+        )
+            return "Only the player who stopped work or a configured task operator can resume it.";
+        if (record && !this.owns(record, sender))
+            return "Only this task's requester or a configured task operator can control it.";
+        if (
+            record?.recipient &&
+            record.requester.toLowerCase() !== sender.toLowerCase() &&
+            command !== "stop"
+        ) {
+            return "Control that private task by its requester, or use stop to halt work.";
+        }
+        if (
+            ["pause", "stop", "resume"].includes(command) &&
+            record &&
+            record.id !== this.active()?.id &&
+            this.active()
+        )
+            return "Select the active task for that control; use cancel to remove a queued task.";
+        if (["pause", "stop"].includes(command) && record?.state === "queued")
+            return "Use cancel to remove a queued task, or pause the active task.";
+        if (["pause", "stop"].includes(command)) {
+            this.revision++;
+            this.suspended = true;
+            this.suspendOwner = sender;
+            if (record && ["running", "paused"].includes(record.state)) {
+                record.state = command === "pause" ? "paused" : "cancelled";
+                record.generation++;
+            }
+            this.save(); // Invalidate the lease before waiting for cleanup.
+            await this.interrupt();
+            return command === "pause"
+                ? "Paused. Completed work is kept; say resume to continue."
+                : "Stopped. Completed work is kept; say resume when you want me to work again.";
+        }
+        if (command === "cancel") {
+            if (
+                !record ||
+                !["running", "paused", "queued"].includes(record.state)
+            )
+                return "There is no matching task to cancel.";
+            this.revision++;
+            record.state = "cancelled";
+            record.generation++;
+            this.save();
+            if (this.lease?.taskId === record.id) await this.interrupt();
+            return `Cancelled ${record.id.slice(
+                0,
+                8
+            )}. Completed work is kept.`;
+        }
+        if (command === "resume") {
+            if (record?.needsReview)
+                return "An interrupted item operation needs inventory review. Cancel that task and request only the remaining work; I won't replay the uncertain transfer.";
+            this.revision++;
+            this.suspended = false;
+            this.suspendOwner = null;
+            if (record?.state === "paused") {
+                record.state = "running";
+                record.generation++;
+            }
+            this.save();
+            return "Resumed. I'll recheck progress before continuing.";
+        }
+        return "Unknown task control.";
+    }
+
+    beginAction(execution) {
+        if (this.lease || this.cleanupCount)
+            throw new TaskInterrupted("An earlier action is still finishing");
+        if (!execution) {
+            if (this.suspended || this.active()) throw new TaskInterrupted();
+            execution = { id: null, generation: 0 };
+        }
+        const record = execution.id ? this.get(execution.id) : null;
+        if (
+            execution.id &&
+            (!record ||
+                record.state !== "running" ||
+                record.needsReview ||
+                record.generation !== execution.generation)
+        )
+            throw new TaskInterrupted();
+        if (this.suspended) throw new TaskInterrupted();
+        const action = {
+            id: randomUUID(),
+            state: "started",
+            started: new Date().toISOString(),
+            operations: [],
+            results: [],
+        };
+        const lease = {
+            taskId: execution.id,
+            generation: execution.generation,
+            action,
+            abort: new AbortController(),
+            finished: false,
+            pending: new Set(),
+            atomicLock: false,
+        };
+        this.lease = lease;
+        if (record) record.actions.push(action);
+        this.save();
+        return lease;
+    }
+
+    check() {
+        const lease = this.context.getStore();
+        if (!lease) return; // Startup and observation work have no generated-action context.
+        const record = lease.taskId ? this.get(lease.taskId) : null;
+        if (
+            lease.finished ||
+            lease.closing ||
+            lease.abort.signal.aborted ||
+            this.suspended ||
+            (record &&
+                (record.state !== "running" ||
+                    record.generation !== lease.generation))
+        )
+            throw new TaskInterrupted();
+    }
+
+    async operation(name, fn, irreversible = false) {
+        const lease = this.context.getStore();
+        const nested = lease && this.atomicContext.getStore() === lease;
+        if (!nested) this.check();
+        if (!lease) return fn();
+        const atomic =
+            irreversible ||
+            [
+                "placeBlock",
+                "dig",
+                "craft",
+                "equip",
+                "consume",
+                "activateBlock",
+                "useOn",
+                "openContainer",
+                "openFurnace",
+            ].includes(name);
+        if (atomic && !nested && lease.atomicLock)
+            throw new Error("Run inventory and world mutations sequentially");
+        const operation = { name, irreversible, atomic, state: "started" };
+        if (irreversible)
+            operation.inventoryBefore = this.bot.inventory
+                ?.items()
+                .map((i) => ({ name: i.name, count: i.count }));
+        lease.action.operations.push(operation);
+        this.save();
+        if (atomic && !nested) lease.atomicLock = true;
+        let result, pending;
+        try {
+            if (atomic) {
+                pending = Promise.resolve(this.atomicContext.run(lease, fn));
+                lease.pending.add(pending);
+                result = await pending;
+            } else result = await this.abortable(fn(), lease);
+            operation.state = "completed";
+        } catch (error) {
+            operation.state = irreversible ? "uncertain" : "interrupted";
+            const record = lease.taskId && this.get(lease.taskId);
+            if (irreversible && record) {
+                this.revision++;
+                record.needsReview = true;
+                record.state = "paused";
+                record.generation++;
+                this.suspended = true;
+                this.suspendOwner = record.requester;
+                lease.abort.abort();
+            }
+            throw error;
+        } finally {
+            if (pending) lease.pending.delete(pending);
+            if (atomic && !nested) lease.atomicLock = false;
+            if (irreversible)
+                operation.inventoryAfter = this.bot.inventory
+                    ?.items()
+                    .map((i) => ({ name: i.name, count: i.count }));
+            this.save();
+        }
+        if (!nested) this.check();
+        return result;
+    }
+
+    abortable(promise, lease = this.context.getStore()) {
+        if (!lease) return Promise.resolve(promise);
+        return new Promise((resolve, reject) => {
+            const abort = () => reject(new TaskInterrupted());
+            lease.abort.signal.addEventListener("abort", abort, { once: true });
+            Promise.resolve(promise)
+                .then(resolve, reject)
+                .finally(() =>
+                    lease.abort.signal.removeEventListener("abort", abort)
+                );
+            if (lease.abort.signal.aborted) abort();
+        });
+    }
+
+    async interrupt() {
+        this.cleanupCount++;
+        try {
+            const lease = this.lease;
+            if (lease) lease.abort.abort();
+            this.bot.pathfinder?.setGoal(null);
+            this.bot.pvp?.stop();
+            this.bot.hawkEye?.stop();
+            this.bot.deactivateItem?.();
+            this.bot.clearControlStates?.();
+            const cleanup = [
+                this.bot.stopDigging?.(),
+                this.bot.collectBlock?.cancelTask?.(),
+            ];
+            // Do not close an inventory window midway through an irreversible transaction.
+            if (
+                !lease?.action.operations.some(
+                    (o) => (o.atomic || o.irreversible) && o.state === "started"
+                ) &&
+                this.bot.currentWindow
+            ) {
+                cleanup.push(this.bot.closeWindow(this.bot.currentWindow));
+            }
+            if (this.bot.isSleeping) cleanup.push(this.bot.wake?.());
+            await Promise.allSettled(cleanup);
+        } finally {
+            this.cleanupCount--;
+        }
+    }
+
+    finishAction(lease, results, error = null) {
+        lease.closing = true;
+        const finish = () => {
+            lease.finished = true;
+            lease.action.state = lease.abort.signal.aborted
+                ? "interrupted"
+                : error
+                ? "failed"
+                : "completed";
+            lease.action.results = results || [];
+            lease.action.error = error?.message || null;
+            const record = lease.taskId ? this.get(lease.taskId) : null;
+            if (record) record.updated = new Date().toISOString();
+            if (this.lease === lease) this.lease = null;
+            this.save();
+        };
+        if (lease.pending.size)
+            return Promise.allSettled([...lease.pending]).then(finish);
+        finish();
+    }
+
+    install() {
+        const bot = this.bot;
+        bot.checkTask = () => this.check();
+        bot.taskSignal = () => this.context.getStore()?.abort.signal;
+        bot.taskAwait = (promise) => this.abortable(promise);
+        bot.taskSleep = async (ms) => {
+            this.check();
+            const lease = this.context.getStore();
+            let timer;
+            try {
+                await this.abortable(
+                    new Promise((resolve) => {
+                        timer = setTimeout(resolve, ms);
+                    }),
+                    lease
+                );
+            } finally {
+                clearTimeout(timer);
+            }
+            this.check();
+        };
+        const wrap = (object, method, irreversible = false) => {
+            if (typeof object?.[method] !== "function") return;
+            const original = object[method].bind(object);
+            object[method] = (...args) =>
+                this.operation(method, () => original(...args), irreversible);
+        };
+        for (const name of [
+            "dig",
+            "placeBlock",
+            "craft",
+            "equip",
+            "consume",
+            "fish",
+            "sleep",
+            "activateBlock",
+            "useOn",
+            "waitForTicks",
+        ])
+            wrap(bot, name);
+        for (const name of ["toss", "tossStack", "transfer"])
+            wrap(bot, name, true);
+        for (const method of ["setGoal", "setMovements"]) {
+            if (!bot.pathfinder?.[method]) continue;
+            const original = bot.pathfinder[method].bind(bot.pathfinder);
+            bot.pathfinder[method] = (...args) => {
+                try {
+                    this.check();
+                } catch (error) {
+                    if (error instanceof TaskInterrupted) return;
+                    throw error;
+                }
+                return original(...args);
+            };
+        }
+        wrap(bot.pathfinder, "goto");
+        wrap(bot.collectBlock, "collect");
+        wrap(bot.pvp, "attack");
+        for (const name of [
+            "attack",
+            "activateItem",
+            "setControlState",
+            "save",
+            "chat",
+        ]) {
+            if (!bot[name]) continue;
+            const original = bot[name].bind(bot);
+            bot[name] = (...args) => {
+                try {
+                    this.check();
+                } catch (error) {
+                    if (error instanceof TaskInterrupted) return;
+                    throw error;
+                }
+                return original(...args);
+            };
+        }
+        for (const name of ["openContainer", "openFurnace"]) {
+            if (!bot[name]) continue;
+            const original = bot[name].bind(bot);
+            bot[name] = async (...args) => {
+                const window = await this.operation(name, () =>
+                    original(...args)
+                );
+                for (const method of [
+                    "withdraw",
+                    "deposit",
+                    "putInput",
+                    "putFuel",
+                    "takeOutput",
+                    "takeInput",
+                    "takeFuel",
+                ])
+                    wrap(window, method, true);
+                return window;
+            };
+        }
+    }
+}
+
+function parseControl(text, username) {
+    if (typeof text !== "string") return null;
+    const escaped = (username || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const addressed = escaped
+        ? text.replace(
+              new RegExp(
+                  `^@?${escaped}[,:!]?\\s+|[, ]+@?${escaped}[.!?]?$`,
+                  "ig"
+              ),
+              ""
+          )
+        : text;
+    const match = addressed
+        .trim()
+        .replace(/[.!?]+$/, "")
+        .match(
+            /^(?:please\s+)?(stop|cancel|pause|resume|status|queue)(?:\s+(?:task\s+)?([a-f0-9-]{8,36}))?$/i
+        );
+    if (match) return { command: match[1].toLowerCase(), id: match[2] || null };
+    const natural = addressed
+        .trim()
+        .replace(/[.!?]+$/, "")
+        .match(
+            /^(?:please\s+)?(stop|pause|cancel|resume|continue)\s+(?:(?:the|this|that|current|my)\s+)?(?:task|work|working|moving|building|following|attacking|everything)$/i
+        );
+    if (natural)
+        return {
+            command:
+                natural[1].toLowerCase() === "continue"
+                    ? "resume"
+                    : natural[1].toLowerCase(),
+            id: null,
+        };
+    if (/^what(?:'s| is) (?:the )?(?:task )?queue\??$/i.test(addressed.trim()))
+        return { command: "queue", id: null };
+    if (/^what are you doing\??$/i.test(addressed.trim()))
+        return { command: "status", id: null };
+    return null;
+}
+module.exports = { TaskController, TaskInterrupted, parseControl };

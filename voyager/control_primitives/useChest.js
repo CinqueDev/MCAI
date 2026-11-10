@@ -1,4 +1,5 @@
 async function getItemFromChest(bot, chestPosition, itemsToGet) {
+    bot.checkTask?.();
     // return if chestPosition is not Vec3
     if (!(chestPosition instanceof Vec3)) {
         bot.log("chestPosition for getItemFromChest must be a Vec3");

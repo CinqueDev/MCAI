@@ -1,6 +1,6 @@
 # Cooperative agent and world memory plan
 
-Status: proposed implementation roadmap. This document does not implement the features below.
+Status: Phase 1 task control is implemented with simulated validation; live Minecraft validation remains pending. Phases 2–6 remain planned.
 
 ## Objective
 

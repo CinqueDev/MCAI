@@ -17,6 +17,7 @@ function bridge() {
             if (["minecraft-data", "mineflayer-pathfinder", "vec3"].includes(name)) return require(name);
             if (name === "express") return () => app;
             if (name === "body-parser") return { json() {}, urlencoded() {} };
+            if (name === "./lib/tasks") return require("../lib/tasks");
             if (name === "./lib/conversation") return require("../lib/conversation");
             if (name === "./lib/connection") return require("../lib/connection");
             if (name === "./lib/pause") return require("../lib/pause");
@@ -167,4 +168,28 @@ test("player action steps preserve workstations and do not grant replacement inv
     assert.equal(bot.actionResults.length, 0);
     assert.equal(movements.canDig, false);
     assert.equal(movements.scafoldingBlocks.length, 0);
+});
+
+test("private stop interrupts an active generated action through the real bridge route", async () => {
+    const { routes, bots } = bridge();
+    routes["/start"]({ body: { port: 25565 } }, response());
+    bots[0].finishLogin();
+    await new Promise(resolve => setImmediate(resolve));
+    const bot = bots[0];
+    bot.registry = require("minecraft-data")("1.21.11");
+    bot.pathfinder = { setMovements() {}, setGoal() {}, isMoving: () => false };
+    bot.clearControlStates = () => {};
+    const task = bot.tasks.enqueue({ task: "Wait for Alice", requester: "Alice", recipient: "Alice" });
+    bot.tasks.claim(task.id);
+    const res = response();
+    const step = routes["/step"]({ body: { execution: { id: task.id, generation: task.generation },
+        programs: "", code: "await bot.taskSleep(60000);", playerRequest: true } }, res);
+    await new Promise(resolve => setImmediate(resolve));
+    bot.emit("whisper", "Alice", "stop");
+    await step;
+    assert.equal(res.statusCode, 200);
+    assert.equal(task.state, "cancelled");
+    assert.equal(task.actions[0].state, "interrupted");
+    assert.equal(bot.tasks.lease, null);
+    assert.ok(bot.commands.some(text => text.startsWith("/msg Alice Stopped")));
 });
