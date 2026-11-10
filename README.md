@@ -266,6 +266,10 @@ Run normally with `python run.py`; no tag or chat command prefix is required.
   public/private channel. Asking a question or discussing a plan need not queue work.
   Active mining/combat is not interrupted mid-action.
 
+Long replies are split into word-aware chunks and sent about 1.2 seconds apart.
+Each private chunk uses `/msg` to the original sender; retries resume the same
+reply instead of repeating chunks already sent.
+
 Task control is handled directly by the Minecraft bridge, independently of model
 latency. Use an exact command in public chat (optionally addressed to the bot) or
 send it privately:
@@ -383,6 +387,12 @@ ownership notes and project progress remain until changed or forgotten. Block
 changes invalidate matching sightings, and older events cannot overwrite fresher
 inspection results. A reported/inferred fact never becomes verified just because a
 model repeats it.
+
+Explicit requests such as “save my coords as home” stay pending until answered,
+even without mentioning the bot. The bot uses your loaded player coordinates
+captured when the request arrives and confirms the coordinates read back from
+memory. If your entity is unavailable, it asks for coordinates rather than using
+its own position. A request without a label asks what to call the place.
 
 Examples of memory-only chat requests:
 

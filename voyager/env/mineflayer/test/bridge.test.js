@@ -12,7 +12,7 @@ function bridge({ initError = null } = {}) {
     const options = [];
     const app = { use() {}, post(route, handler) { routes[route] = handler; }, listen() {} };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../index.js"), "utf8"), {
-        console, process: Object.assign(new EventEmitter(), { argv: [] }),
+        setTimeout, clearTimeout, console, process: Object.assign(new EventEmitter(), { argv: [] }),
         require(name) {
             if (["minecraft-data", "mineflayer-pathfinder", "vec3"].includes(name)) return require(name);
             if (name === "express") return () => app;
@@ -106,10 +106,10 @@ test("chat routes operate independently and enforce the incoming private channel
     routes["/chat"]({ body: {} }, inbox);
     const { session, pending } = inbox.value;
     const out = response();
-    routes["/chat"]({ body: { session, replyTo: pending[0].id, key: "1", recipient: "Bob", text: "Hello" } }, out);
+    await routes["/chat"]({ body: { session, replyTo: pending[0].id, key: "1", recipient: "Bob", text: "Hello" } }, out);
     assert.equal(out.value.delivered, true);
     assert.deepEqual(bot.commands, ["/msg Alice Hello"]);
-    routes["/chat"]({ body: { session, replyTo: pending[0].id, key: "1", text: "Hello" } }, response());
+    await routes["/chat"]({ body: { session, replyTo: pending[0].id, key: "1", text: "Hello" } }, response());
     assert.equal(bot.commands.length, 1);
 });
 
@@ -222,4 +222,24 @@ test("a setup failure cannot publish a successful start followed by an empty con
     const tasks = response();
     await routes["/tasks"]({ body: {} }, tasks);
     assert.equal(tasks.value.code, "BOT_DISCONNECTED");
+});
+
+test('multipart chat stays pending across HTTP polls and sends each private chunk once', async () => {
+    const { routes, bots, spawn } = bridge();
+    await routes['/start']({ body: { port: 25565 } }, response());
+    await spawn();
+    const bot = bots[0];
+    bot.emit('whisper', 'Alice', 'please explain');
+    const payload = { session: bot.conversation.session, replyTo: 1, key: 'multipart', text: 'a'.repeat(500) };
+    const first = response();
+    await routes['/chat']({ body: payload }, first);
+    assert.equal(first.value.pending, true);
+    assert.equal(bot.conversation.pending.size, 1);
+    const second = response();
+    await routes['/chat']({ body: payload }, second);
+    assert.equal(second.value.delivered, true);
+    assert.equal(second.value.parts, 3);
+    assert.equal(bot.commands.length, 3);
+    assert.ok(bot.commands.every(s => s.startsWith('/msg Alice ') && s.length <= 240));
+    assert.equal(bot.conversation.pending.size, 0);
 });

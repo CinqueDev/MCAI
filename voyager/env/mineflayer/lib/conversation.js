@@ -1,10 +1,12 @@
+const { ChatDelivery } = require("./chatDelivery");
+const { parseLocationMemory } = require("./locationMemory");
 const { parseControl } = require("./tasks");
 const { playerState } = require("./playerState");
 const { randomUUID } = require("node:crypto");
 
 // One conversation lifetime per Minecraft connection. Diagnostics never go on wire.
 class Conversation {
-    constructor(bot, now = Date.now) {
+    constructor(bot, now = Date.now, deliveryOptions = {}) {
         this.bot = bot;
         this.now = now;
         this.session = randomUUID();
@@ -12,7 +14,7 @@ class Conversation {
         this.history = [];
         this.events = [];
         this.pending = new Map();
-        this.sent = new Set();
+        this.delivery = new ChatDelivery(this, deliveryOptions);
         this.lastSpoke = now();
         this.task = null;
         this.rawChat = bot.chat.bind(bot);
@@ -79,9 +81,7 @@ class Conversation {
     }
 
     players() {
-        return Object.keys(this.bot.players || {}).filter(
-            (name) => name.toLowerCase() !== this.bot.username?.toLowerCase()
-        );
+        return playerState(this.bot).map(player => player.username);
     }
 
     record(message) {
@@ -102,8 +102,9 @@ class Conversation {
             sender.toLowerCase() === this.bot.username?.toLowerCase()
         )
             return;
+        const locationMemory = parseLocationMemory(text, this.bot.username);
         const required =
-            channel === "private" ||
+            Boolean(locationMemory) || channel === "private" ||
             Boolean(
                 this.bot.username &&
                     text.toLowerCase().includes(this.bot.username.toLowerCase())
@@ -114,6 +115,7 @@ class Conversation {
             channel,
             outgoing: false,
             required,
+            locationMemory,
         });
         const player = playerState(this.bot).find(
             (p) => p.username.toLowerCase() === sender.toLowerCase()
@@ -136,23 +138,17 @@ class Conversation {
             entry.control = true;
             this.bot.tasks
                 .control(control.command, sender, control.id, channel)
-                .then((reply) => {
-                    this.send({
-                        session: this.session,
-                        key: `control:${entry.id}`,
-                        replyTo: entry.id,
-                        text: reply,
-                    });
-                })
                 .catch((error) => {
                     console.error("Task control failed", error);
-                    this.send({
-                        session: this.session,
-                        key: `control:${entry.id}`,
-                        replyTo: entry.id,
-                        text: "I couldn't finish that task control. Please try again.",
-                    });
-                });
+                    return "I couldn't finish that task control. Please try again.";
+                })
+                .then((reply) => this.send({
+                    session: this.session,
+                    key: `control:${entry.id}`,
+                    replyTo: entry.id,
+                    text: reply,
+                }))
+                .catch(error => console.error("Could not deliver task control reply:", error.message));
         }
     }
 
@@ -190,7 +186,8 @@ class Conversation {
             throw new Error("Conversation connection changed");
         if (typeof key !== "string" || !key || key.length > 200)
             throw new Error("Missing delivery key");
-        if (this.sent.has(key)) return { delivered: true };
+        const existing = this.delivery.existing(key);
+        if (existing) return existing;
         const original = replyTo == null ? null : this.pending.get(replyTo);
         if (replyTo != null && !original)
             throw new Error("Message already answered or unknown");
@@ -209,22 +206,9 @@ class Conversation {
             throw new Error("Chat replies cannot execute commands");
         if (!original && !target && this.players().length === 0)
             return { delivered: false };
-        // Keep a reply below Minecraft's command/chat length limit, including /msg.
         const prefix = target ? `/msg ${target} ` : "";
-        this.rawChat(prefix + clean.slice(0, 240 - prefix.length));
-        this.record({
-            sender: this.bot.username,
-            text: clean.slice(0, 240 - prefix.length),
-            channel: target ? "private" : "public",
-            recipient: target || null,
-            outgoing: true,
-        });
-        this.lastSpoke = this.now();
-        if (original) this.pending.delete(replyTo);
-        this.sent.add(key);
-        if (this.sent.size > 1000)
-            this.sent.delete(this.sent.values().next().value);
-        return { delivered: true };
+        const maximum = this.bot.supportFeature?.("lessCharsInChat") ? 100 : 240;
+        return this.delivery.enqueue(key, { clean, prefix, target, original, maximum });
     }
 }
 module.exports = { Conversation };

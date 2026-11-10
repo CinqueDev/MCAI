@@ -41,7 +41,7 @@ function fixture(options = {}) {
         },
         collectBlock: { cancelTask: async () => {} },
     });
-    bot.conversation = new Conversation(bot);
+    bot.conversation = new Conversation(bot, Date.now, { interval: 0 });
     bot.tasks = new TaskController(bot, options);
     bot.tasks.install();
     return { bot, controller: bot.tasks };

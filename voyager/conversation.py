@@ -216,12 +216,20 @@ class ConversationWorker:
             username = re.escape(snapshot.get("username") or "")
             if username:
                 text = re.sub(r"^@?" + username + r"(?:[,!:]\s*|\s+)", "", text, flags=re.I)
-            match = re.fullmatch(r"(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:remember|save|mark|note)\s+"
-                r"(?:here|this (?:location|place|spot)|my (?:current )?(?:location|position|coordinates)|where I am)"
-                r"\s+(?:as|named|called)\s+(?:my\s+|our\s+)?([^\n!?]{1,80}?)[.!?]?", text, re.I)
-            if not match:
-                continue
-            name = match[1].strip().rstrip(".")
+            intent = source.get("locationMemory")
+            if not isinstance(intent, dict):
+                place = r"(?:here|this (?:location|place|spot|position)|my (?:current )?(?:location|position|coordinates|coords)|where I am)"
+                polite = r"(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:remember|save|mark|note)\s+"
+                match = re.fullmatch(polite + place + r"\s+(?:as|named|called|under the name)\s+(?:my\s+|our\s+)?([^\n!?]{1,80}?)[.!?]?", text, re.I)
+                reversed_match = re.fullmatch(polite + r"(?:my\s+|our\s+)?(.{1,80}?)\s+(?:at|using)\s+" + place + r"[.!?]?", text, re.I)
+                match = match or reversed_match
+                if match:
+                    intent = {"name": match[1].strip().rstrip(".").strip("\"'")}
+                elif re.fullmatch(polite + place + r"[.!?]?", text, re.I):
+                    intent = {"name": None}
+                else:
+                    continue
+            name = intent.get("name")
             private = source["channel"] == "private"
             actor = source["sender"]
             locations = snapshot.get("playerLocations") or []
@@ -230,11 +238,27 @@ class ConversationWorker:
                 locations = [{"username": actor, "position": source["requesterLocation"]}]
                 dimension = source.get("requesterDimension")
             try:
-                results = self.world_memory.apply_chat([{"op": "remember", "kind": "place", "name": name, "data": {}}],
-                    actor=actor, private=private, dimension=dimension, user_text=source["text"],
-                    message_id=f"{snapshot['session']}:{source['id']}", player_locations=locations)
-                errors = [result["error"] for result in results if not result["ok"]]
-                reply = "I couldn't save that place: " + errors[0] if errors else f"I'll remember your location as {name}."
+                if not name:
+                    reply = "What should I call this place? For example, 'save my location as home'."
+                    results = None
+                else:
+                    results = self.world_memory.apply_chat([{"op": "remember", "kind": "place", "name": name, "data": {"position": None}}],
+                        actor=actor, private=private, dimension=dimension, user_text=source["text"],
+                        message_id=f"{snapshot['session']}:{source['id']}", player_locations=locations)
+                if results is not None:
+                    errors = [result["error"] for result in results if not result["ok"]]
+                    if errors:
+                        reply = "I couldn't save that place: " + errors[0]
+                    elif results[0].get("already_applied"):
+                        reply = "I've already processed that location request."
+                    else:
+                        saved = self.world_memory.get(results[0]["id"], actor if private else None)
+                        if not saved or not saved["data"].get("position"):
+                            raise RuntimeError("Saved location could not be read back")
+                        pos = saved["data"]["position"]
+                        coordinates = ", ".join(f"{pos[axis]:g}" for axis in ("x", "y", "z"))
+                        dimension_name = saved.get("dimension") or "unknown dimension"
+                        reply = f"Saved {saved['name']} at ({coordinates}) in {dimension_name}."
             except Exception:
                 log.exception("Could not save requested location")
                 reply = "I couldn't save that location right now. Please try again."
@@ -364,6 +388,8 @@ class ConversationWorker:
         payload, metadata = self.outbox
         # Preserve the same key after an ambiguous HTTP failure (no duplicate replies).
         result = self.request(payload)
+        if result.get("pending"):
+            return  # Keep the same delivery key until every paced chat chunk is sent.
         self.outbox = None
         if result.get("delivered"):
             if metadata:

@@ -89,3 +89,47 @@ class MemoryOperationSchemaTests(unittest.TestCase):
                         "requesterLocation": None, "requesterDimension": None})
         self.assertEqual(self.memory.search("home", actor="Alice"), [])
         self.assertIn("unknown", worker.request.call_args.args[0]["text"])
+
+
+    def test_public_location_write_survives_a_later_private_message_and_confirms_saved_coordinates(self):
+        llm = Mock()
+        worker = ConversationWorker(Mock(), llm=llm, world_memory=self.memory, ckpt_dir=self.directory.name)
+        worker.session = "live"
+        worker.cursor = 99  # A later private message already advanced the cursor.
+        incoming = {"id": 2, "sender": "Alice", "channel": "public", "outgoing": False,
+                    "text": "Can you save my coords as home please?", "locationMemory": {"name": "home"},
+                    "requesterLocation": {"x": -12, "y": 70, "z": 19}, "requesterDimension": "overworld"}
+        snapshot = {"session": "live", "cursor": 99, "history": [], "pending": [incoming], "state": {},
+                    "playerLocations": [{"username": "Alice", "position": {"x": 500, "y": 64, "z": 500}}]}
+        worker.request = Mock(side_effect=lambda payload: {"delivered": True} if "text" in payload else snapshot)
+        worker.tick()
+        llm.assert_not_called()
+        payload = worker.request.call_args.args[0]
+        self.assertEqual(payload["replyTo"], 2)
+        self.assertIsNone(payload["recipient"])
+        self.assertIn("(-12, 70, 19)", payload["text"])
+        self.assertIn("overworld", payload["text"])
+        row = self.memory.search("home")[0]
+        self.assertEqual(row["data"]["position"], {"x": -12, "y": 70, "z": 19})
+        self.assertEqual(self.memory.search("home", actor="Bob")[0]["id"], row["id"])
+
+    def test_location_write_without_a_label_asks_for_a_name(self):
+        llm = Mock()
+        worker = ConversationWorker(Mock(), llm=llm, world_memory=self.memory, ckpt_dir=self.directory.name)
+        worker.request = Mock(return_value={"delivered": True})
+        worker.respond({"session": "unnamed", "history": []},
+                       {"id": 1, "sender": "Alice", "channel": "private", "text": "save my location",
+                        "locationMemory": {"name": None}, "requesterLocation": {"x": 1, "y": 2, "z": 3}})
+        llm.assert_not_called()
+        self.assertIn("call this place", worker.request.call_args.args[0]["text"])
+        self.assertEqual(self.memory.search(actor="Alice"), [])
+
+    def test_failed_readback_does_not_claim_a_location_was_saved(self):
+        worker = ConversationWorker(Mock(), llm=Mock(), world_memory=self.memory, ckpt_dir=self.directory.name)
+        worker.request = Mock(return_value={"delivered": True})
+        from unittest.mock import patch
+        with patch.object(self.memory, "get", return_value=None), self.assertLogs("voyager.conversation", level="ERROR"):
+            worker.respond({"session": "readback", "history": []},
+                {"id": 1, "sender": "Alice", "channel": "private", "text": "remember here as home",
+                 "requesterLocation": {"x": 1, "y": 2, "z": 3}})
+        self.assertIn("couldn't save", worker.request.call_args.args[0]["text"])

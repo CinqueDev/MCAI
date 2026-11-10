@@ -9,7 +9,7 @@ function setup() {
     bot.players = { Voyager: {}, Alice: {}, Bob: {} };
     const wire = [];
     bot.chat = text => wire.push(text);
-    const chat = new Conversation(bot, () => 1000);
+    const chat = new Conversation(bot, () => 1000, { interval: 0 });
     return { bot, chat, wire };
 }
 function reply(chat, extra = {}) {
@@ -33,21 +33,21 @@ test("logs stay internal, commands still work, and player events carry channel a
     assert.deepEqual(chat.snapshot().players, ["Alice", "Bob"]);
 });
 
-test("case insensitive username substrings anywhere require public replies", () => {
+test("case insensitive username substrings anywhere require public replies", async () => {
     const { bot, chat, wire } = setup();
     bot.emit("chat", "Alice", "hey someVOYAGERthing, come here");
     const [message] = chat.snapshot().pending;
     assert.ok(message.required);
-    reply(chat, { replyTo: message.id, recipient: "Bob" });
+    await reply(chat, { replyTo: message.id, recipient: "Bob" });
     assert.deepEqual(wire, ["Hello!"]);
     assert.equal(chat.pending.size, 0);
 });
 
-test("private mentions always route to the original sender via /msg", () => {
+test("private mentions always route to the original sender via /msg", async () => {
     const { bot, chat, wire } = setup();
     bot.emit("whisper", "Alice", "Voyager, keep this private");
     const [message] = chat.snapshot().pending;
-    reply(chat, { replyTo: message.id, recipient: "Bob" });
+    await reply(chat, { replyTo: message.id, recipient: "Bob" });
     assert.deepEqual(wire, ["/msg Alice Hello!"]);
     assert.equal(chat.history.at(-1).channel, "private");
     assert.equal(chat.history.at(-1).recipient, "Alice");
@@ -66,31 +66,31 @@ test("modern translated vanilla messages are recorded once despite parsed legacy
     assert.equal(chat.history.length, 2);
 });
 
-test("delivery retries are idempotent and stale connections cannot speak", () => {
+test("delivery retries are idempotent and stale connections cannot speak", async () => {
     const { chat, wire } = setup();
-    reply(chat);
-    reply(chat);
+    await reply(chat);
+    await reply(chat);
     assert.equal(wire.length, 1);
     assert.throws(() => reply(chat, { session: "old", key: "other" }), /connection changed/);
 });
 
-test("reply text cannot become a command, forge lines, or overflow chat", () => {
+test("reply text cannot become a command, forge lines, or overflow chat", async () => {
     const { chat, wire } = setup();
     assert.throws(() => reply(chat, { text: "/op Alice" }), /commands/);
     assert.throws(() => reply(chat, { recipient: "Alice /op Bob" }), /recipient/);
-    reply(chat, { recipient: "Alice", text: "Hello\nthere " + "a".repeat(400) });
+    await reply(chat, { recipient: "Alice", text: "Hello\nthere " + "a".repeat(400) });
     assert.ok(wire[0].length <= 240);
     assert.ok(!wire[0].includes("\n"));
     assert.ok(wire[0].startsWith("/msg Alice Hello there"));
 });
 
-test("alone is explicit; unsolicited public messages suppressed but required replies survive", () => {
+test("alone is explicit; unsolicited public messages suppressed but required replies survive", async () => {
     const { bot, chat, wire } = setup();
     bot.players = { Voyager: {} };
     assert.equal(chat.snapshot().noPlayersOnline, true);
     assert.deepEqual(reply(chat), { delivered: false });
     bot.emit("chat", "Alice", "Voyager?");
-    reply(chat, { replyTo: chat.snapshot().pending[0].id });
+    await reply(chat, { replyTo: chat.snapshot().pending[0].id });
     assert.deepEqual(wire, ["Hello!"]);
 });
 

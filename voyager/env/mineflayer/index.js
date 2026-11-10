@@ -543,12 +543,21 @@ app.post("/observe", (req, res) => {
 });
 
 // Independent of /step: chat remains available while generated actions await work.
-app.post("/chat", (req, res) => {
+app.post("/chat", async (req, res) => {
     if (!bot?.conversation)
         return res.status(409).json({ error: "Bot not connected" });
     try {
-        if (req.body.text !== undefined)
-            return res.json(bot.conversation.send(req.body));
+        if (req.body.text !== undefined) {
+            let timer;
+            try {
+                const delivery = bot.conversation.send(req.body);
+                const result = await Promise.race([delivery, new Promise(resolve => {
+                    timer = setTimeout(() => resolve({ delivered: false, pending: true }), 1500);
+                })]);
+                if (!res.destroyed) res.json(result);
+                return;
+            } finally { clearTimeout(timer); }
+        }
         res.json(bot.conversation.snapshot());
     } catch (error) {
         res.status(400).json({ error: error.message });

@@ -119,6 +119,21 @@ class ConversationTests(unittest.TestCase):
         self.llm.assert_called_once()
         self.assertEqual(self.worker.request.call_args.args[0]["key"], key)
 
+    def test_multipart_delivery_keeps_outbox_and_defers_decisions_until_complete(self):
+        data = snapshot()
+        data["pending"] = [message(channel="private")]
+        self.llm.return_value = AIMessage(content='{"reply":"Long reply", "task":"Bring Alice torches"}')
+        self.worker.request = Mock(side_effect=[data, {"pending": True, "delivered": False}])
+        self.worker.tick()
+        key = self.worker.outbox[0]["key"]
+        self.assertIsNone(self.worker.pop_task())
+        self.worker.request = Mock(side_effect=[data, {"delivered": True, "parts": 4}])
+        self.worker.tick()
+        self.llm.assert_called_once()
+        self.assertEqual(self.worker.request.call_args.args[0]["key"], key)
+        self.assertIsNone(self.worker.outbox)
+        self.assertEqual(self.worker.pop_task()["task"], "Bring Alice torches")
+
     def test_new_connection_discards_stale_delivery(self):
         self.worker.outbox = ({"session": "old", "text": "stale reply"}, None)
         data = snapshot()
