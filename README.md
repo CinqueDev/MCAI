@@ -73,17 +73,63 @@ Voyager switches its setup gamerules to the renamed identifiers on 1.21.11+.
 ## Run with DeepSeek
 
 Create a key in the [DeepSeek API platform](https://platform.deepseek.com/), then
-set it in the same terminal used to run Voyager:
+save it in `.env` beside `config.json`:
 
-```bash
-export DEEPSEEK_API_KEY='your-deepseek-api-key'
-python run.py --mc-port 12345
+```dotenv
+DEEPSEEK_API_KEY=your-deepseek-api-key
 ```
 
-Replace `12345` with the LAN port shown by Minecraft. The first run downloads the
+For a fresh checkout, copy `config.example.json` to `config.json` and
+`.env.example` to `.env`, then edit the copies. Both personal files are ignored
+by Git; keep the API key in `.env`, not in JSON. Existing exported environment
+variables take priority over `.env` values.
+
+For example, a local Java 26.1 LAN configuration is:
+
+```json
+{
+  "mc_host": "localhost",
+  "mc_port": 49532,
+  "mc_auth": "offline",
+  "mc_username": "bot",
+  "mc_version": "26.1",
+  "mc_pause_mode": "none",
+  "ckpt_dir": "ckpt-first-run",
+  "resume": false
+}
+```
+
+Replace `49532` with the LAN port shown by Minecraft. Use `resume: false` for
+a new checkpoint, then `resume: true` to continue an initialized checkpoint.
+Keep Minecraft version numbers quoted; use `null` for automatic detection.
+You can then launch without arguments:
+
+```bash
+python run.py
+```
+
+Command-line options override JSON settings, which override built-in defaults:
+
+```bash
+python run.py --mc-port 54321
+python run.py --resume
+python run.py --ckpt-dir ckpt-new-world --no-resume
+python run.py --config /path/to/another/config.json
+```
+
+By default, `config.json` is found beside `run.py`, regardless of the working
+directory. With `--config`, `.env` is read beside the selected JSON file.
+Relative checkpoint and authentication-cache paths in JSON are resolved against
+the JSON file's directory; explicit CLI paths are relative to the working
+directory. Running with CLI settings and no config file remains supported.
+JSON keys use the Python-style names shown in `config.example.json`; unknown
+keys and invalid types produce a startup error.
+
+The first run downloads the
 embedding model from Hugging Face; later searches run locally on the CPU.
 DeepSeek chat requests still require internet access and a funded API account.
-An `.env` file is not loaded automatically; export the variable in your shell.
+`.env` loading happens in `run.py`; when using the Python API directly, pass
+the key explicitly, export it, or load `.env` in your own script.
 
 You can also use the Python interface:
 

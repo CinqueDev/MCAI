@@ -130,3 +130,6 @@ plot_iter.py
 # Microsoft authentication tokens (never commit)
 .minecraft-auth/
 node_modules/
+
+# Personal launch settings
+/config.json

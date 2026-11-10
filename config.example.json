@@ -1,0 +1,11 @@
+{
+  "mc_host": "localhost",
+  "mc_port": 25565,
+  "mc_auth": "offline",
+  "mc_username": "bot",
+  "mc_version": null,
+  "mc_pause_mode": "none",
+  "mc_profiles_folder": ".minecraft-auth",
+  "ckpt_dir": "ckpt",
+  "resume": false
+}
