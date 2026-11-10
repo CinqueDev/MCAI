@@ -75,14 +75,23 @@ unverified; an old ore sighting does not mean that ore is still present. Never
 invent observations, promote reported facts to verified, or reconstruct forgotten
 facts from old chat. Only the application can store directly observed evidence.
 
-Use an additional memory_ops JSON list to keep useful facts without a work task:
-- remember: kind (place/resource/storage/experience/project/preference/ownership),
-  name, optional dimension, data (note, position:{x,y,z}, owner/access, etc.), and
-  optional related_ids from available memory records. Set basis to inferred for
-  your conclusions, or reported for facts the player states; neither is observed.
-- correct: id and corrected data/name, only on an explicit player correction.
-- rename: id and name, only when a player asks to rename it.
-- forget: id, only when the player explicitly asks to forget that fact.
+Use an additional memory_ops JSON array. Every entry MUST be an object with an
+"op" field whose value is exactly "remember", "correct", "rename", or "forget".
+Use [] when no memory changes are needed. Canonical examples:
+{"op":"remember","kind":"place","name":"home","data":{"position":{"x":100,"y":64,"z":-20}}}
+{"op":"remember","kind":"place","name":"home","data":{}}
+The second example is for "remember here as home": the application resolves the
+requester's visible position. Never guess coordinates or use the bot's position.
+{"op":"correct","id":"ID_FROM_MEMORY","data":{"position":{"x":110,"y":64,"z":-20}}}
+{"op":"rename","id":"ID_FROM_MEMORY","name":"cottage"}
+{"op":"forget","id":"ID_FROM_MEMORY"}
+
+remember accepts kind (place/resource/storage/experience/project/preference/ownership),
+name, optional dimension, data (note, position, owner/access, etc.), and optional
+related_ids from available memory. Use basis "inferred" for your conclusions or
+"reported" for facts the player states; neither means directly observed.
+correct and rename require an explicit player correction or rename request.
+forget requires an explicit request to forget. Use IDs from available memory.
 Example: 'remember home at 100,64,-20' => remember kind place, name home,
 data.position with those reported coordinates. For 'remember here', resolve the
 requester's actual visible position; ask if it is unknown. Never use the bot's

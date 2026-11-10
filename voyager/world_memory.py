@@ -27,6 +27,35 @@ def position(value):
     return {k: value[k] for k in ("x", "y", "z")}
 
 
+MEMORY_OPERATIONS = {"remember", "correct", "rename", "forget"}
+OPERATION_ALIASES = {"save": "remember", "add": "remember", "create": "remember", "store": "remember",
+                     "update": "correct", "edit": "correct", "delete": "forget", "remove": "forget"}
+
+
+def normalize_memory_operation(value):
+    """Normalize naming variations only; all authorization and grounding follows."""
+    if not isinstance(value, dict):
+        raise ValueError("Each memory operation must be a JSON object")
+    operation = dict(value)
+    verb = next((operation[key] for key in ("op", "operation", "action")
+                 if isinstance(operation.get(key), str) and operation[key].strip()), None)
+    if verb is None and isinstance(operation.get("type"), str):
+        candidate = operation["type"].strip().casefold()
+        if candidate in MEMORY_OPERATIONS or candidate in OPERATION_ALIASES:
+            verb = candidate
+    if verb is not None:
+        verb = verb.strip().casefold()
+        verb = OPERATION_ALIASES.get(verb, verb)
+    if verb not in MEMORY_OPERATIONS:
+        raise ValueError("Memory action must specify op: remember, correct, rename or forget")
+    operation["op"] = verb
+    data = operation.get("data", {})
+    if not isinstance(data, dict):
+        raise ValueError("Memory data must be a JSON object")
+    operation["data"] = dict(data)
+    return operation
+
+
 class WorldMemory:
     def __init__(self, path, *, server, account, world_id, clock=time.time, operators=()):
         self.path = Path(path)
@@ -290,13 +319,16 @@ class WorldMemory:
                     results.append({"ok": True, "already_applied": True})
                     continue
             try:
-                op = operation.get("op")
-                operation = {**operation, "data": dict(operation.get("data", {}))}
+                operation = normalize_memory_operation(operation)
+                op = operation["op"]
+                if op == "remember" and operation.get("kind") in ("place", "resource", "storage", "project", "ownership") and re.search(r"\b(here|qui|qua)\b", user_text, re.I):
+                    # A valid "remember here" needs a location even if the model omitted data.position.
+                    operation["data"].setdefault("position", None)
                 if op in ("remember", "correct") and "position" in operation["data"]:
                     supplied = position(operation["data"]["position"])
                     numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", user_text)]
                     here = re.search(r"\b(here|qui|qua)\b", user_text, re.I)
-                    if here and len(numbers) < 3:
+                    if here and (len(numbers) < 3 or supplied is None):
                         player = next((p for p in player_locations if p.get("username", "").casefold() == actor.casefold()), {})
                         supplied = position(player.get("position"))
                         if supplied is None:
@@ -308,9 +340,9 @@ class WorldMemory:
                             raise ValueError("Please provide coordinates or identify an existing remembered location")
                 memory_actor = actor if private else None
                 if op in ("forget", "correct", "rename"):
-                    if op == "forget" and not re.search(r"\b(forget|erase|remove|dimentica|scorda|cancella)\b", user_text, re.I):
+                    if op == "forget" and not re.search(r"\b(forget|erase|delete|remove|dimentica|scorda|cancella)\b", user_text, re.I):
                         raise ValueError("Forgetting requires an explicit player request")
-                    if op in ("correct", "rename") and not re.search(r"\b(actually|correct|rename|change|instead|update|correggi|rinomina|anzi|realtà)\b", user_text, re.I):
+                    if op in ("correct", "rename") and not re.search(r"\b(actually|correct|rename|change|instead|update|edit|correggi|rinomina|anzi|realtà)\b", user_text, re.I):
                         raise ValueError("Editing memory requires an explicit correction or rename")
                     with self.lock:
                         old = self._get(operation.get("id"), actor if private else None)

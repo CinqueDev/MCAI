@@ -1,0 +1,70 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import Mock
+
+from langchain.schema import AIMessage
+from voyager.conversation import ConversationWorker, WORLD_MEMORY_PROMPT
+from voyager.world_memory import WorldMemory, normalize_memory_operation
+
+
+class MemoryOperationSchemaTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.memory = WorldMemory(Path(self.directory.name) / "world.sqlite3", server="local", account="bot", world_id="test")
+        self.addCleanup(self.memory.close)
+
+    def apply(self, operation, text="Remember here as home", message_id="home", locations=None):
+        return self.memory.apply_chat([operation], actor="Alice", private=True, dimension="overworld",
+            user_text=text, message_id=message_id, player_locations=locations if locations is not None else
+            [{"username": "Alice", "position": {"x": 4, "y": 64, "z": 8}}])
+
+    def test_common_field_and_verb_variants_save_the_same_grounded_home(self):
+        for index, operation in enumerate([
+            {"op": "remember"}, {"operation": "remember"}, {"action": "save"},
+            {"type": "remember"}, {"op": " Remember "}, {"operation": "create"},
+        ]):
+            with self.subTest(operation=operation):
+                result = self.apply({**operation, "kind": "place", "name": "home", "data": {}}, message_id=str(index))
+                self.assertTrue(result[0]["ok"], result)
+                row = self.memory.get(result[0]["id"], "Alice")
+                self.assertEqual(row["data"]["position"], {"x": 4, "y": 64, "z": 8})
+                self.assertEqual(row["source"], "reported")
+        self.assertEqual(len(self.memory.search("home", actor="Alice")), 1)
+        self.assertEqual(self.memory.search("home"), [])
+
+    def test_missing_or_unsupported_operations_are_not_guessed(self):
+        for operation in [{"kind": "place"}, {"op": "execute"}, {"type": "place"}, "remember", {"op": "remember", "data": []}]:
+            with self.subTest(operation=operation), self.assertRaises(ValueError):
+                normalize_memory_operation(operation)
+        self.assertEqual(self.memory.search(actor="Alice"), [])
+
+    def test_here_without_a_visible_player_does_not_create_a_positionless_home(self):
+        result = self.apply({"operation": "save", "kind": "place", "name": "home"}, locations=[])
+        self.assertFalse(result[0]["ok"])
+        self.assertIn("location is unknown", result[0]["error"])
+        self.assertEqual(self.memory.search("home", actor="Alice"), [])
+
+    def test_normalization_does_not_bypass_edit_or_forget_intent_checks(self):
+        result = self.apply({"op": "remember", "kind": "place", "name": "home"})
+        identifier = result[0]["id"]
+        for index, verb in enumerate(["delete", "update"]):
+            outcome = self.apply({"action": verb, "id": identifier}, text="hello", message_id=f"edit-{index}")
+            self.assertFalse(outcome[0]["ok"])
+        self.assertIsNotNone(self.memory.get(identifier, "Alice"))
+
+    def test_conversation_acknowledges_only_after_home_was_saved(self):
+        worker = ConversationWorker(Mock(), llm=Mock(return_value=AIMessage(content=json.dumps({
+            "reply": "I'll remember this as home.", "memory_ops": [{"operation": "remember", "kind": "place", "name": "home", "data": {}}]
+        }))), world_memory=self.memory, ckpt_dir=self.directory.name)
+        def deliver(payload):
+            self.assertEqual(self.memory.search("home", actor="Alice")[0]["data"]["position"], {"x": 4, "y": 64, "z": 8})
+            return {"delivered": True}
+        worker.request = Mock(side_effect=deliver)
+        worker.respond({"session": "connection", "history": [], "state": {"dimension": "overworld"},
+                        "players": ["Alice"], "playerLocations": [{"username": "Alice", "position": {"x": 4, "y": 64, "z": 8}}]},
+                       {"id": 1, "sender": "Alice", "channel": "private", "text": "Remember here as home"})
+        self.assertNotIn("couldn't", worker.request.call_args.args[0]["text"])
+        self.assertIn('"op":"remember"', WORLD_MEMORY_PROMPT)
