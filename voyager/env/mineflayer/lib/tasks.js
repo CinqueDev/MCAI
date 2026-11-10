@@ -1,3 +1,4 @@
+const { CONTROLS, renderCommandHelp } = require("./commandCatalog");
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
@@ -198,6 +199,7 @@ class TaskController {
     }
 
     async control(command, sender, id = null, channel = "public") {
+        if (command === "cmds") return renderCommandHelp(this.bot.username);
         let record;
         if (id) {
             const matches = this.records.filter((t) => t.id.startsWith(id));
@@ -644,9 +646,14 @@ function parseControl(text, username) {
         .trim()
         .replace(/[.!?]+$/, "")
         .match(
-            /^(?:please\s+)?(stop|cancel|pause|resume|status|queue)(?:\s+(?:task\s+)?([a-f0-9-]{8,36}))?$/i
+            new RegExp(`^(?:please\\s+)?(${CONTROLS.flatMap(c => [c.name, ...(c.aliases || [])]).join("|")})(?:\\s+(?:task\\s+)?([a-f0-9-]{8,36}))?$`, "i")
         );
-    if (match) return { command: match[1].toLowerCase(), id: match[2] || null };
+    if (match) {
+        const name = match[1].toLowerCase();
+        const control = CONTROLS.find(c => c.name === name || c.aliases?.includes(name));
+        if (control.name === "cmds" && match[2]) return null;
+        return { command: control.name, id: match[2] || null };
+    }
     const natural = addressed
         .trim()
         .replace(/[.!?]+$/, "")
@@ -661,10 +668,9 @@ function parseControl(text, username) {
                     : natural[1].toLowerCase(),
             id: null,
         };
-    if (/^what(?:'s| is) (?:the )?(?:task )?queue\??$/i.test(addressed.trim()))
-        return { command: "queue", id: null };
-    if (/^what are you doing\??$/i.test(addressed.trim()))
-        return { command: "status", id: null };
+    const phrase = addressed.trim().replace(/[.!?]+$/, "").toLowerCase();
+    const control = CONTROLS.find(c => c.phrases?.includes(phrase));
+    if (control) return { command: control.name, id: null };
     return null;
 }
 module.exports = { TaskController, TaskInterrupted, parseControl };

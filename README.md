@@ -276,12 +276,23 @@ send it privately:
 
 | Message | Effect |
 | --- | --- |
+| `cmds` / `commands` / `help` | List task controls, memory requests, gameplay examples and chat preferences. |
 | `Voyager, stop` | Cancel the active task and halt new work until resumed. |
 | `pause` | Pause the active task, keeping verified progress, and halt new work. |
 | `resume` | Continue with fresh observations and a new execution generation. |
 | `cancel` / `cancel task <id>` | Cancel the active task or a specific queued task. |
 | `status` / `what are you doing?` | Report visible active work and completed action batches. |
 | `queue` | List visible running, paused and queued tasks with short IDs. |
+
+Say `cmds` publicly or send `/msg <bot_username> cmds` for the complete built-in
+help. It works without the social model or an initialized task controller, uses
+the incoming public/private channel, and splits long replies into paced messages.
+The list distinguishes direct controls from AI-interpreted request examples.
+
+Help is maintained in `voyager/env/mineflayer/lib/commandCatalog.js`; direct
+command names and aliases are registered from that same catalog. Update it in the
+same change as any player-facing capability. The command-help tests flag action
+primitive files missing from the catalog, including newly added helpers.
 
 Replace `Voyager` with the bot's actual username. Only exact controls are handled
 this way; sentences discussing or quoting “stop” are not cancellation commands.

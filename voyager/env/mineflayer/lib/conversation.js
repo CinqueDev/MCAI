@@ -1,3 +1,4 @@
+const { renderCommandHelp } = require("./commandCatalog");
 const { ChatDelivery } = require("./chatDelivery");
 const { parseLocationMemory } = require("./locationMemory");
 const { parseControl } = require("./tasks");
@@ -131,14 +132,15 @@ class Conversation {
     handleControl(entry) {
         if (entry.control || entry.outgoing) return;
         const { sender, text, channel } = entry;
-        const control = this.bot.tasks && parseControl(text, this.bot.username);
-        if (control) {
+        const control = parseControl(text, this.bot.username);
+        if (control && (control.command === "cmds" || this.bot.tasks)) {
             entry.required = true;
             this.pending.set(entry.id, entry);
             entry.control = true;
-            this.bot.tasks
-                .control(control.command, sender, control.id, channel)
-                .catch((error) => {
+            const response = control.command === "cmds"
+                ? Promise.resolve(renderCommandHelp(this.bot.username))
+                : this.bot.tasks.control(control.command, sender, control.id, channel);
+            response.catch((error) => {
                     console.error("Task control failed", error);
                     return "I couldn't finish that task control. Please try again.";
                 })

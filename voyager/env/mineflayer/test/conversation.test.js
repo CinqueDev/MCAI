@@ -96,10 +96,10 @@ test("alone is explicit; unsolicited public messages suppressed but required rep
 
 test("history is bounded but unacknowledged mandatory messages survive history eviction", () => {
     const { bot, chat } = setup();
-    bot.emit("whisper", "Alice", "help");
+    bot.emit("whisper", "Alice", "please assist me");
     for (let i = 0; i < 110; i++) bot.emit("chat", "Bob", "ambient " + i);
     assert.equal(chat.history.length, 100);
-    assert.equal(chat.snapshot().pending[0].text, "help");
+    assert.equal(chat.snapshot().pending[0].text, "please assist me");
 });
 
 test("request-time player coordinates are captured from loaded entities if the tab-list link is missing", () => {

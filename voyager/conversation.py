@@ -65,7 +65,7 @@ why queued tasks are waiting; tell the player to resume or review/cancel as appr
 Planning and a brief handoff between tasks are normal, not evidence of a queue bug.
 Never invent a queue failure from an empty active task. A recovered task starts paused.
 
-Exact stop/cancel/pause/resume/status/queue controls are handled immediately by the task controller. Do not turn them into new work requests.
+Exact stop/cancel/pause/resume/status/queue controls and cmds/commands/help are handled immediately by the bridge. Do not turn them into new work requests.
 
 Return ONLY JSON with keys: reply (string or null), memory (list of strings),
 quiet_seconds (number, usually 0), task (string or null), requester (actual username
