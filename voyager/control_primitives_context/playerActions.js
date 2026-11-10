@@ -22,3 +22,19 @@ async function buildStructure(bot, blocks) {}
 // Call after approaching a player offering supplies so you do not immediately walk away.
 // Does not identify who supplied the item, and throws on timeout.
 async function waitForItem(bot, names, count = 1, timeoutMs = 30000) {}
+// Resolve a target with explicit evidence or an unresolved/ambiguous reason. Reference types:
+// player (name, omit for requester), current_location, behind_player (name), looked_block,
+// beside_block (pointed block, optional block name), coordinates/block (position, dimension),
+// landmark (name from scoped world memory), entity (name or entityId).
+// Never turn unresolved results into guessed coordinates. No cross-dimension travel.
+function resolveTarget(bot, reference) {}
+// Resolve and walk to a reference, including behind a player or a remembered place.
+async function moveToTarget(bot, reference, range = 1, timeoutMs = 30000) {}
+// Start a PERSISTENT mode associated with this explicit player task. It takes over
+// after this action returns: do not perform further gameplay operations afterward.
+// Foreground requests temporarily yield this mode; it resumes when they finish.
+// Use the controller's stop/pause/cancel controls; never create your own infinite loop.
+async function followPlayer(bot, username, distance = 2) {}
+// Hold the bot's current position, or resolve the supplied reference and hold there.
+// For the requesting player's position: {type:'current_location'}.
+async function stayAt(bot, reference = null) {}

@@ -30,6 +30,7 @@ class DeepSeekTests(unittest.TestCase):
         self.requests = []
         self.content = "```javascript\nasync function collectWood(bot) {}\n```"
         self.finish_reason = "stop"
+        self.tool_calls = None
         self.transport = httpx.MockTransport(self.respond)
         self.client_patch = patch(
             "voyager.llm.OpenAI",
@@ -47,7 +48,7 @@ class DeepSeekTests(unittest.TestCase):
             "model": "deepseek-flash",
             "choices": [{"index": 0, "finish_reason": self.finish_reason,
                          "message": {"role": "assistant", "content": self.content,
-                                     "reasoning_content": "not part of the answer"}}],
+                                     "reasoning_content": "not part of the answer", "tool_calls": self.tool_calls}}],
         })
 
     def test_request_uses_deepseek_key_model_and_message_roles(self):
@@ -64,6 +65,24 @@ class DeepSeekTests(unittest.TestCase):
         self.assertEqual(answer.content, self.content)
         self.assertIsInstance(answer, AIMessage)
         self.assertEqual(chat.client.timeout, 31)
+
+    def test_native_tool_calls_and_receipts_use_the_actual_chat_completions_protocol(self):
+        from voyager.conversation_tools import API_TOOLS
+        self.finish_reason = "tool_calls"
+        self.content = None
+        self.tool_calls = [{"id": "cancel-1", "type": "function", "function": {
+            "name": "control_task", "arguments": '{"command":"cancel","target":"beehive"}'}}]
+        chat = DeepSeekChat(api_key="test")
+        response = chat.complete([HumanMessage(content="Forget about that beehive job, stop it")], tools=API_TOOLS)
+        body = json.loads(self.requests[-1].content)
+        self.assertEqual(body["tools"], API_TOOLS)
+        self.assertEqual(body["tool_choice"], "auto")
+        self.assertEqual(response.tool_calls[0].function.name, "control_task")
+        self.finish_reason, self.content, self.tool_calls = "stop", '{"reply":"Cancelled"}', None
+        chat.complete([{"role": "user", "content": "stop it"},
+                       response.model_dump(include={"role", "content", "tool_calls"}),
+                       {"role": "tool", "tool_call_id": "cancel-1", "content": '{"ok":true,"message":"Cancelled"}'}], tools=API_TOOLS)
+        self.assertEqual(json.loads(self.requests[-1].content)["messages"][-1]["role"], "tool")
 
     def test_environment_configuration(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "env-key", "DEEPSEEK_BASE_URL": "https://gateway.example/v1"}, clear=True):

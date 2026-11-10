@@ -196,6 +196,9 @@ class VoyagerEnv(gym.Env):
             "execution": self.execution,
             "task": {"description": self.current_task, "recipient": self.task_recipient},
         }
+        if self.world_memory:
+            data["worldMemory"] = self.world_memory.context(self.current_task or "", actor=self.task_recipient,
+                kinds=["place", "resource", "storage", "project"], limit=50)
         res = requests.post(
             f"{self.server}/step", json=data, timeout=self.request_timeout
         )
@@ -302,7 +305,8 @@ class VoyagerEnv(gym.Env):
             )
             if res.status_code != 200:
                 raise RuntimeError(f"Failed to change Minecraft pause state: {res.text}")
-            self.server_paused = paused
+            payload = res.json()
+            self.server_paused = payload.get("paused", paused) if isinstance(payload, dict) else paused
         return self.server_paused
 
     def pause(self):

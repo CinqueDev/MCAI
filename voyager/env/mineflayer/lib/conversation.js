@@ -139,7 +139,7 @@ class Conversation {
             entry.control = true;
             const response = control.command === "cmds"
                 ? Promise.resolve(renderCommandHelp(this.bot.username))
-                : this.bot.tasks.control(control.command, sender, control.id, channel);
+                : this.bot.tasks.control(control.command, sender, control.id, channel, control.target);
             response.catch((error) => {
                     console.error("Task control failed", error);
                     return "I couldn't finish that task control. Please try again.";

@@ -1,3 +1,4 @@
+const { resolveWorldTarget } = require("./lib/targetResolver");
 const fs = require("fs");
 const { WorldObservations } = require("./lib/worldObservations");
 const { TaskController, TaskInterrupted } = require("./lib/tasks");
@@ -225,9 +226,12 @@ app.post("/step", async (req, res) => {
     if (!stepBot?.tasks)
         return res.status(409).json({ error: "Bot not ready" });
     const controller = stepBot.tasks;
+    if (!req.body.execution && !req.body.code?.trim() && !req.body.programs?.trim())
+        return res.json(stepBot.observe()); // Startup/refresh is read-only, even during a persistent mode.
     let lease, executionError;
     try {
         lease = controller.beginAction(req.body.execution);
+        lease.targetMemory = Array.isArray(req.body.worldMemory) ? req.body.worldMemory : [];
         await controller.context.run(lease, async () => {
             const bot = stepBot;
 
@@ -499,6 +503,18 @@ app.post("/tasks", async (req, res) => {
         const body = req.body;
         let result;
         switch (body.operation || "snapshot") {
+            case "resolve":
+                result = resolveWorldTarget(bot, body.reference, body);
+                break;
+            case "movement":
+                result = body.expectedRevision != null && body.expectedRevision !== controller.revision &&
+                    !controller.records.some(t => t.key === body.key) && !Object.hasOwn(controller.controlReceipts, body.key)
+                    ? { ok: false, message: "Work changed while I was thinking. Please repeat the request." }
+                    : controller.movementModes.request(body);
+                break;
+            case "control":
+                result = await controller.executeControl(body);
+                break;
             case "planning":
                 controller.planning = Boolean(body.value);
                 result = true;
@@ -580,6 +596,8 @@ app.post("/pause", async (req, res) => {
     if (typeof paused !== "boolean")
         return res.status(400).json({ error: "paused must be boolean" });
     try {
+        if (paused && currentBot.tasks?.active()?.movement && !currentBot.tasks.suspended)
+            return res.json({ message: "Persistent movement needs world ticks", paused: false });
         if (paused !== currentBot.serverPaused) {
             await setPaused(currentBot, mode, paused);
             currentBot.serverPaused = paused;

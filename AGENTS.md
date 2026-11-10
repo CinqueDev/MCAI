@@ -4,6 +4,9 @@ When adding, changing, or removing player-facing chat controls, memory operation
 action capabilities, or chat preferences, update
 `voyager/env/mineflayer/lib/commandCatalog.js` in the same change. This catalog
 renders the in-game `cmds` response and registers direct command names and aliases.
+Native tool definitions and examples live in `voyager/conversation_tools.json`;
+update that registry alongside tool behavior. Prefer semantic tool calls over
+adding required natural-language phrases. Retain immediate emergency controls.
 Keep examples accurate about whether requests run directly or are interpreted by
 the AI, including relevant gameplay limitations.
 

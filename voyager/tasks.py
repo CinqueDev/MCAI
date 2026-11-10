@@ -36,9 +36,12 @@ class TaskClient:
 
     def claim(self):
         active = self.snapshot()["active"]
+        if active and active.get("movement"):
+            return None  # Persistent movement is executed by the bridge, not a generated script.
         if active and active["state"] == "running":
             return active
-        return self.call("claim")
+        claimed = self.call("claim")
+        return None if claimed and claimed.get("movement") else claimed
 
     def begin(self, task, context="", request_id=None):
         if request_id:
@@ -53,6 +56,10 @@ class TaskClient:
             return None
         record = self.enqueue({"task": task, "context": context, "priority": 0})
         return self.call("claim", id=record["id"])
+
+    def control(self, command, sender, *, target=None, identifier=None, private=False, revision=None, key=None):
+        return self.call("control", command=command, sender=sender, target=target,
+                         id=identifier, channel="private" if private else "public", expectedRevision=revision, key=key)
 
     def get(self, identifier):
         return self.call("get", id=identifier)

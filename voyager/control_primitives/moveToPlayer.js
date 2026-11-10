@@ -6,19 +6,21 @@ async function moveToPlayer(bot, username, range = 2, timeoutMs = 30000) {
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) throw new Error("Invalid navigation timeout");
     const deadline = Date.now() + timeoutMs;
     for (let attempt = 0; attempt < 3; attempt++) {
-        const player = Object.values(bot.players).find(p => p.username?.toLowerCase() === username.toLowerCase());
-        if (!player?.entity?.position || player.entity.isValid === false) {
+        const target = bot.resolveTarget?.({ type: 'player', name: username });
+        const entry = Object.entries(bot.players || {}).find(([name, p]) => (p.username || name).toLowerCase() === username.toLowerCase());
+        const entity = (entry?.[1]?.entity?.isValid !== false && entry?.[1]?.entity?.position ? entry[1].entity : null) ||
+            Object.values(bot.entities || {}).find(e => e.isValid !== false && e.position && e.username?.toLowerCase() === username.toLowerCase());
+        if (!entity || (target && target.status !== 'resolved')) {
             throw new Error(`${username} is not visible in loaded chunks. Ask for x, y, z coordinates and dimension; do not guess.`);
         }
-        const entity = player.entity;
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error(`Timed out reaching ${username}`);
         await navigateToGoal(bot, new GoalFollow(entity, range), remaining);
-        const current = player.entity;
+        const current = entry?.[1]?.entity || Object.values(bot.entities || {}).find(e => e.id === entity.id) || entity;
         if (current && current.isValid !== false && bot.entity.position.distanceTo(current.position) <= range + 0.75) {
             await bot.lookAt(current.position.offset(0, 1.4, 0));
             bot.checkTask?.();
-    const result = { type: "approach_player", player: player.username,
+    const result = { type: "approach_player", player: entity.username || entry?.[0] || username,
                 position: bot.entity.position.clone(), target: current.position.clone(), range, verified: true };
             (bot.actionResults ||= []).push(result);
             return result;

@@ -1,0 +1,348 @@
+[
+  {
+    "name": "task_status",
+    "description": "Inspect active and queued tasks visible in this conversation, including their IDs. Use before selecting a task if needed.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "examples": [
+      "what are you working on?",
+      "show my queued tasks"
+    ]
+  },
+  {
+    "name": "control_task",
+    "description": "Actually stop, cancel, pause or resume work. Omit id and target for the active task. Use target to select by description (e.g. beehive); ambiguous matches return clarification. Only report the returned result. Never queue cancellation as gameplay work.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "stop",
+            "cancel",
+            "pause",
+            "resume"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string",
+          "description": "Words identifying an existing task; not a new task description."
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "cancel the beehive task",
+      "I want you to stop what you're doing",
+      "put that task on hold"
+    ]
+  },
+  {
+    "name": "queue_task",
+    "description": "Queue an explicit request for Minecraft work. Preserve requested counts, materials and coordinates. Include the actual requesting username. Work is attempted later, not performed immediately by this tool.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "come here and wait for a pickaxe",
+      "mine sixteen coal"
+    ]
+  },
+  {
+    "name": "search_memory",
+    "description": "Look up scoped world memory. Return evidence, dimension and freshness; old sightings are not current observations.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "where did we build the house?"
+    ]
+  },
+  {
+    "name": "remember_location",
+    "description": "Save the requesting player's CURRENT location using captured/loaded coordinates, never invented numbers or the bot's position. Any natural wording can select this tool. An optional name labels the place; otherwise use a player-specific default. It returns the saved coordinates or an error.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "examples": [
+      "can you remember the location I am currently at?",
+      "keep a note of this spot for me"
+    ]
+  },
+  {
+    "name": "update_memory",
+    "description": "Remember, correct, rename or forget a world fact following the player's request. For CURRENT player coordinates use remember_location instead. Editing requires an existing record ID from search_memory. Coordinates must be supplied by the player or grounded in a referenced record.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "remember",
+            "correct",
+            "rename",
+            "forget"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "place",
+            "resource",
+            "storage",
+            "experience",
+            "project",
+            "preference",
+            "ownership"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "dimension": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "note": {
+              "type": "string"
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "owner": {
+              "type": "string"
+            },
+            "access": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "remember that I prefer spruce",
+      "forget the old home location"
+    ]
+  },
+  {
+    "name": "resolve_target",
+    "description": "Resolve a concrete world reference: me/here, behind me, a block I am looking at, beside that chest, an explicit coordinate/entity, or a remembered landmark. Returns resolved, ambiguous or unresolved with an explanation. Does not move or edit blocks. Private memory is scoped automatically; cross-dimension and stale locations are rejected.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "player",
+                "current_location",
+                "behind_player",
+                "looked_block",
+                "beside_block",
+                "coordinates",
+                "block",
+                "entity",
+                "landmark"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "description": "Player username, landmark name, or entity type. Omit player name for the requester."
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "dimension": {
+              "type": "string"
+            },
+            "block": {
+              "type": "string"
+            },
+            "entityId": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "reference"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "which block am I looking at?",
+      "where is the spot behind me?"
+    ]
+  },
+  {
+    "name": "set_movement",
+    "description": "Start continuous following or staying under the task controller, or stop/resume the requester's previous following mode. Modes persist until stopped or lost, and yield to foreground requests. For follow, reference defaults to the requesting player; for stay, reference defaults to the bot's current position. For stay HERE use current_location. Query resolve_target for ambiguous world references. Do not claim movement finished: inspect the returned Started/Queued/error receipt.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "follow",
+            "stay",
+            "stop_following",
+            "resume_following"
+          ]
+        },
+        "reference": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "player",
+                "current_location",
+                "behind_player",
+                "looked_block",
+                "beside_block",
+                "coordinates",
+                "block",
+                "entity",
+                "landmark"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "description": "Player username, landmark name, or entity type. Omit player name for the requester."
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "dimension": {
+              "type": "string"
+            },
+            "block": {
+              "type": "string"
+            },
+            "entityId": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "distance": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "follow me at 3 blocks",
+      "stay here",
+      "stop following me",
+      "resume following",
+      "stay at home"
+    ]
+  }
+]

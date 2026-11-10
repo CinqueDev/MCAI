@@ -64,6 +64,30 @@ class TaskControlTests(unittest.TestCase):
         self.assertEqual(client.claim(), active)
         client.call.assert_not_called()
 
+    def test_persistent_movement_is_not_claimed_by_the_action_planner(self):
+        client = TaskClient(Mock())
+        client.snapshot = Mock(return_value={"active": {"state": "running", "movement": {"mode": "follow"}}})
+        client.call = Mock()
+        self.assertIsNone(client.claim())
+        client.call.assert_not_called()
+
+    def test_persistent_movement_handoff_does_not_wait_for_completion_or_run_the_critic(self):
+        voyager = Voyager.__new__(Voyager)
+        voyager.task = "Follow Alice"
+        voyager.task_controller = Mock()
+        record = {"id": "follow", "state": "running", "generation": 2, "movement": {"mode": "follow"}}
+        voyager.task_controller.begin.return_value = record
+        voyager.task_controller.get.return_value = record
+        voyager.env = Mock(player_request=True)
+        voyager.reset = Mock()
+        voyager.step = Mock(return_value=([], 0, False, {"task": "Follow Alice", "success": False,
+            "controlled": True, "persistent": True, "interrupted": True}))
+        _, _, _, info = voyager.rollout(task="Follow Alice", context="")
+        self.assertTrue(info['persistent'])
+        voyager.task_controller.wait_running.assert_not_called()
+        voyager.task_controller.complete.assert_not_called()
+        voyager.step.assert_called_once()
+
     def test_client_forwards_action_generation_for_completion(self):
         env = Mock(server="http://127.0.0.1:3000")
         client = TaskClient(env)

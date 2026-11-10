@@ -1,6 +1,6 @@
 # Cooperative agent and world memory plan
 
-Status: Phases 1–2 (task control and shared world memory) are implemented with simulated validation; live Minecraft validation remains pending. Phases 3–6 remain planned.
+Status: Phases 1–3 (task control, shared world memory, world references/following/staying) are implemented with simulated validation; live Minecraft validation remains pending. Phases 4–6 remain planned. Native conversation tools now execute task/memory/reference/movement requests rather than relying on required sentences. Safe interrupted work recovers automatically on reconnect; explicit halts and uncertain inventory operations remain paused.
 
 ## Objective
 
@@ -70,6 +70,24 @@ Create a common target resolver returning a concrete player, entity, block face,
 - Keep cross-dimension targets unresolved in this release; report the limitation rather than claiming portal travel.
 
 Acceptance: “follow me,” “stay here,” “come behind me,” and pointing-based targets either resolve correctly or produce a useful clarification.
+
+Implemented Phase 3 details:
+
+- Native `resolve_target` and `set_movement` tools interpret user intent; callers,
+  channels, memory scope, receipts and permissions are bound by the application.
+- A shared resolver returns resolved/unresolved/ambiguous targets. Pointing uses
+  observed eye/head data, a 6-block raycast and loaded-chunk checks; adjacent or
+  behind positions require supported, non-hazardous space.
+- Follow/stay modes are durable tasks with exclusive movement leases. Foreground
+  requests temporarily yield them; autonomous curriculum waits. Lost players stop
+  movement immediately and get a bounded 15-second reappearance window. Blocked
+  routes time out after 30 seconds without progress; low health/lava pauses safely.
+- Safe tasks and modes requeue on reconnect with new generations and preserved
+  receipts. Explicit pauses/stops/safety halts and uncertain item actions remain
+  paused. A disconnected controller cannot overwrite the new session's journal.
+- Generated actions have resolver/follow/stay primitives and scoped memory context;
+  Python hands persistent modes back to the bridge rather than asking the critic
+  to finish a continuous task. `cmds` includes the new capabilities.
 
 ## Phase 4 — Inspection, containers, and object interaction
 

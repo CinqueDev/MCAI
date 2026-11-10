@@ -42,3 +42,17 @@ function playerState(bot) {
         });
 }
 module.exports = { playerState };
+
+// Resolve from the same loaded-entity sources as observation, not tab-list presence alone.
+function playerEntity(bot, name) {
+    if (typeof name !== "string") return null;
+    const entry = Object.entries(bot.players || {}).find(([key, value]) =>
+        (value.username || key).toLowerCase() === name.toLowerCase());
+    const listed = entry?.[1];
+    const valid = e => e && e.isValid !== false && e.position && [e.position.x, e.position.y, e.position.z].every(Number.isFinite);
+    if (valid(listed?.entity)) return listed.entity;
+    return Object.values(bot.entities || {}).find(e => valid(e) &&
+        ((e.username || bot.uuidToUsername?.[e.uuid] || "").toLowerCase() === name.toLowerCase() ||
+         (listed?.uuid && e.uuid?.replace(/-/g, "").toLowerCase() === listed.uuid.replace(/-/g, "").toLowerCase()))) || null;
+}
+module.exports.playerEntity = playerEntity;

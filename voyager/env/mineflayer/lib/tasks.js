@@ -1,3 +1,5 @@
+const { MovementModes } = require("./movementModes");
+const { resolveWorldTarget } = require("./targetResolver");
 const { CONTROLS, renderCommandHelp } = require("./commandCatalog");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -23,39 +25,54 @@ class TaskController {
         this.cleanupCount = 0;
         this.revision = 0;
         this.records = [];
+        this.controlReceipts = Object.create(null);
+        this.controlInFlight = new Map();
+        this.disconnected = false;
         this.suspended = false;
         this.suspendOwner = null;
+        this.suspensionReason = null;
         this.observationRecipient = null;
         if (this.path && fs.existsSync(this.path)) {
             const data = JSON.parse(fs.readFileSync(this.path, "utf8"));
             if (data.version !== 1 || !Array.isArray(data.tasks))
                 throw new Error("Unsupported task journal");
             this.records = data.tasks;
+            this.controlReceipts = Object.assign(Object.create(null), data.controlReceipts || {});
+            this.suspensionReason = data.suspensionReason || null;
             this.revision = (data.revision || 0) + 1;
             this.suspended = Boolean(data.suspended);
             this.suspendOwner = data.suspendOwner || null;
             this.observationRecipient = data.observationRecipient || null;
+            const legacyRecovery = !data.suspensionReason && !this.suspendOwner &&
+                this.records.some(t => t.state === "paused" && t.recovery && !t.needsReview);
+            if (legacyRecovery) this.suspended = false;
+            const explicitHalt = this.suspended;
             for (const task of this.records) {
-                if (task.state === "running") {
-                    task.state = "paused";
+                if (task.state === "running" || (legacyRecovery && task.state === "paused" && task.recovery && !task.needsReview)) {
                     task.generation++;
                     task.recovery = true;
-                    task.needsReview = task.actions.some((a) =>
-                        a.operations?.some(
-                            (o) =>
-                                ["started", "uncertain"].includes(o.state) &&
-                                o.irreversible
-                        )
-                    );
-                    this.suspended = true;
+                    task.needsReview = Boolean(task.needsReview || task.actions.some(a => a.operations?.some(o =>
+                        ["started", "uncertain"].includes(o.state) && (o.irreversible || ["craft", "consume"].includes(o.name)))));
+                    task.state = task.needsReview || explicitHalt ? "paused" : "queued";
+                    for (const action of task.actions) if (action.state === "started") action.state = "interrupted";
+                    if (task.needsReview) {
+                        this.suspended = true;
+                        this.suspensionReason = "review";
+                        this.suspendOwner ||= task.requester;
+                    }
                 }
             }
         }
+        bot.once?.("end", () => {
+            this.disconnected = true;
+            this.lease?.abort.abort();
+        });
+        this.movementModes = new MovementModes(this);
         this.save();
     }
 
     save() {
-        if (!this.path) return;
+        if (!this.path || this.disconnected) return;
         fs.mkdirSync(path.dirname(this.path), { recursive: true });
         const temporary = this.path + ".tmp";
         fs.writeFileSync(
@@ -66,6 +83,8 @@ class TaskController {
                     revision: this.revision,
                     suspended: this.suspended,
                     suspendOwner: this.suspendOwner,
+                    suspensionReason: this.suspensionReason,
+                    controlReceipts: this.controlReceipts,
                     observationRecipient: this.observationRecipient,
                     tasks: this.records,
                 },
@@ -86,6 +105,7 @@ class TaskController {
         );
     }
     snapshot() {
+        this.movementModes.dispatch();
         return {
             revision: this.revision,
             busy: Boolean(this.lease || this.cleanupCount),
@@ -142,11 +162,12 @@ class TaskController {
         };
         this.records.push(record);
         this.save();
+        this.movementModes.yieldForForeground(record);
         return record;
     }
 
     claim(id = null) {
-        if (this.suspended || this.active()) return null;
+        if (this.suspended || this.active() || this.lease || this.cleanupCount) return null;
         const record = id
             ? this.get(id)
             : this.records
@@ -154,6 +175,7 @@ class TaskController {
                   .sort((a, b) => b.priority - a.priority)[0];
         if (!record || record.state !== "queued") return null;
         record.state = "running";
+        this.revision++;
         this.planning = false;
         record.generation++;
         record.updated = new Date().toISOString();
@@ -170,6 +192,7 @@ class TaskController {
         )
             return false;
         record.state = success ? "completed" : "failed";
+        this.revision++;
         record.reason = reason;
         record.updated = new Date().toISOString();
         this.save();
@@ -198,10 +221,57 @@ class TaskController {
         );
     }
 
-    async control(command, sender, id = null, channel = "public") {
+    async executeControl(request) {
+        const { command, sender, id = null, target = null, channel = "public", expectedRevision = null, key = null } = request;
+        if (!["stop", "cancel", "pause", "resume", "status", "queue"].includes(command) ||
+            !/^[A-Za-z0-9_]{1,16}$/.test(sender || "") ||
+            (id !== null && typeof id !== "string") || (target !== null && (typeof target !== "string" || !target.trim() || target.length > 120)) ||
+            !["private", "public"].includes(channel) || (key !== null && (typeof key !== "string" || key.length > 250)))
+            throw new Error("Invalid task control request");
+        const signature = JSON.stringify({ command, sender, id, target, channel });
+        if (key && this.controlReceipts[key]) {
+            if (this.controlReceipts[key].signature !== signature) throw new Error("Control key reused for a different request");
+            return this.controlReceipts[key].result;
+        }
+        if (key && this.controlInFlight.has(key)) {
+            const existing = this.controlInFlight.get(key);
+            if (existing.signature !== signature) throw new Error("Control key reused for a different request");
+            return existing.promise;
+        }
+        const run = async () => {
+            const before = this.revision;
+            const message = expectedRevision !== null && expectedRevision !== this.revision
+                ? "Work changed while I was thinking. Please repeat the control request."
+                : await this.control(command, sender, id, channel, target);
+            const result = { ok: this.revision !== before || ["status", "queue"].includes(command), message, revision: this.revision };
+            if (key) {
+                this.controlReceipts[key] = { signature, result };
+                const keys = Object.keys(this.controlReceipts);
+                for (const old of keys.slice(0, Math.max(0, keys.length - 1000))) delete this.controlReceipts[old];
+                this.save();
+            }
+            return result;
+        };
+        const promise = run();
+        if (key) this.controlInFlight.set(key, { signature, promise });
+        try { return await promise; }
+        finally { if (key) this.controlInFlight.delete(key); }
+    }
+
+    async control(command, sender, id = null, channel = "public", target = null) {
         if (command === "cmds") return renderCommandHelp(this.bot.username);
         let record;
-        if (id) {
+        if (target) {
+            const words = target.toLowerCase().match(/[a-z0-9_]+/g) || [];
+            const matches = this.records.filter(t =>
+                ["queued", "running", "paused"].includes(t.state) && this.owns(t, sender) &&
+                (!t.recipient || (channel === "private" && t.requester?.toLowerCase() === sender.toLowerCase())) &&
+                words.length && words.every(word => t.task.toLowerCase().includes(word)));
+            if (!matches.length) return "No active or queued task matches that name in this chat. Use queue to see task IDs.";
+            if (matches.length > 1) return "More than one task matches. Use " + command + " task <id>: " +
+                matches.map(t => `${t.id.slice(0, 8)}: ${t.task}`).join("; ");
+            record = matches[0];
+        } else if (id) {
             const matches = this.records.filter((t) => t.id.startsWith(id));
             if (matches.length !== 1)
                 return "That task ID is unknown or ambiguous.";
@@ -300,6 +370,7 @@ class TaskController {
             this.revision++;
             this.suspended = true;
             this.suspendOwner = sender;
+            this.suspensionReason = "manual";
             if (record && ["running", "paused"].includes(record.state)) {
                 record.state = command === "pause" ? "paused" : "cancelled";
                 record.generation++;
@@ -336,6 +407,7 @@ class TaskController {
             this.revision++;
             this.suspended = false;
             this.suspendOwner = null;
+            this.suspensionReason = null;
             if (record?.state === "paused") {
                 record.state = "running";
                 record.generation++;
@@ -392,7 +464,7 @@ class TaskController {
         if (!lease) return; // Startup and observation work have no generated-action context.
         const record = lease.taskId ? this.get(lease.taskId) : null;
         if (
-            lease.finished ||
+            this.disconnected || lease.finished ||
             lease.closing ||
             lease.abort.signal.aborted ||
             this.suspended ||
@@ -449,6 +521,7 @@ class TaskController {
                 record.generation++;
                 this.suspended = true;
                 this.suspendOwner = record.requester;
+                this.suspensionReason = "review";
                 lease.abort.abort();
             }
             throw error;
@@ -524,6 +597,7 @@ class TaskController {
             if (record) record.updated = new Date().toISOString();
             if (this.lease === lease) this.lease = null;
             this.save();
+            this.movementModes.dispatch();
         };
         if (lease.pending.size)
             return Promise.allSettled([...lease.pending]).then(finish);
@@ -532,6 +606,12 @@ class TaskController {
 
     install() {
         const bot = this.bot;
+        bot.movementModes = this.movementModes;
+        bot.resolveTarget = reference => {
+            const lease = this.context.getStore();
+            const task = lease?.taskId && this.get(lease.taskId);
+            return resolveWorldTarget(bot, reference, { requester: task?.requester, memories: lease?.targetMemory || [] });
+        };
         bot.checkTask = () => this.check();
         bot.taskSignal = () => this.context.getStore()?.abort.signal;
         bot.taskAwait = (promise) => this.abortable(promise);
@@ -627,6 +707,7 @@ class TaskController {
                 return window;
             };
         }
+        this.movementModes.ready = true;
     }
 }
 
@@ -642,7 +723,9 @@ function parseControl(text, username) {
               ""
           )
         : text;
-    const match = addressed
+    const input = addressed.trim().replace(/[.!?]+$/, "")
+        .replace(/^(?:(?:can|could|would) you\s+)?(?:please\s+)?/i, "");
+    const match = input
         .trim()
         .replace(/[.!?]+$/, "")
         .match(
@@ -654,11 +737,11 @@ function parseControl(text, username) {
         if (control.name === "cmds" && match[2]) return null;
         return { command: control.name, id: match[2] || null };
     }
-    const natural = addressed
+    const natural = input
         .trim()
         .replace(/[.!?]+$/, "")
         .match(
-            /^(?:please\s+)?(stop|pause|cancel|resume|continue)\s+(?:(?:the|this|that|current|my)\s+)?(?:task|work|working|moving|building|following|attacking|everything)$/i
+            /^(?:please\s+)?(stop|pause|cancel|resume|continue)\s+(?:(?:the|this|that|my)\s+)?(?:current\s+)?(?:task|work|working|moving|building|attacking|everything)$/i
         );
     if (natural)
         return {

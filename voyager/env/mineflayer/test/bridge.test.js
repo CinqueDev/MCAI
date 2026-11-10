@@ -18,6 +18,7 @@ function bridge({ initError = null } = {}) {
             if (name === "express") return () => app;
             if (name === "body-parser") return { json() {}, urlencoded() {} };
             if (name === "./lib/worldObservations") return require("../lib/worldObservations");
+            if (name === "./lib/targetResolver") return require("../lib/targetResolver");
             if (name === "./lib/tasks") return require("../lib/tasks");
             if (name === "./lib/conversation") return require("../lib/conversation");
             if (name === "./lib/connection") return require("../lib/connection");
@@ -242,4 +243,43 @@ test('multipart chat stays pending across HTTP polls and sends each private chun
     assert.equal(bot.commands.length, 3);
     assert.ok(bot.commands.every(s => s.startsWith('/msg Alice ') && s.length <= 240));
     assert.equal(bot.conversation.pending.size, 0);
+});
+
+test('native cancellation route returns controller receipts and retries never cancel the next task', async () => {
+    const { routes, bots, spawn } = bridge();
+    routes['/start']({ body: { port: 25565 } }, response());
+    await spawn();
+    const controller = bots[0].tasks;
+    const task = controller.enqueue({ task: 'Break the beehive', requester: 'Alice' });
+    controller.claim(task.id);
+    const body = { operation: 'control', command: 'cancel', sender: 'Alice', target: 'beehive', channel: 'private', key: 'natural-control', expectedRevision: controller.revision };
+    const receipt = response();
+    await routes['/tasks']({ body }, receipt);
+    assert.equal(receipt.value.ok, true);
+    assert.equal(task.state, 'cancelled');
+    const next = controller.enqueue({ task: 'Break another beehive', requester: 'Alice' });
+    controller.claim(next.id);
+    const repeated = response();
+    await routes['/tasks']({ body }, repeated);
+    assert.deepEqual(repeated.value, receipt.value);
+    assert.equal(next.state, 'running');
+});
+
+test('observation-only startup does not take a movement lease and server pause cannot freeze an active mode', async () => {
+    const { routes, bots, spawn } = bridge();
+    routes['/start']({ body: { port: 25565, pauseMode: 'tick' } }, response());
+    await spawn();
+    const bot = bots[0];
+    const task = bot.tasks.enqueue({ task: 'Follow Alice', requester: 'Alice' });
+    bot.tasks.claim(task.id);
+    task.movement = { mode: 'follow' };
+    const lease = bot.tasks.beginAction({ id: task.id, generation: task.generation });
+    const observed = response();
+    await routes['/step']({ body: { code: '', programs: '' } }, observed);
+    assert.equal(observed.statusCode, 200);
+    assert.equal(bot.tasks.lease, lease);
+    const paused = response();
+    await routes['/pause']({ body: { mode: 'tick', paused: true } }, paused);
+    assert.equal(paused.value.paused, false);
+    assert.deepEqual(bot.commands, []);
 });

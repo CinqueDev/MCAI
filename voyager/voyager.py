@@ -293,6 +293,9 @@ class Voyager:
                     "state": record["state"] if record else "cancelled", "interrupted": True}
         self.active_task = record
         self.env.execution = {"id": record["id"], "generation": record["generation"]}
+        if record.get("movement"):
+            return {"task": self.task, "success": False, "controlled": True, "persistent": True,
+                    "state": record["state"], "interrupted": True}
         return None
 
     def step(self):
@@ -412,6 +415,8 @@ class Voyager:
         while True:
             messages, reward, done, info = self.step()
             if info.get("controlled"):
+                if info.get("persistent"):
+                    break
                 record = controller.wait_running(self.active_task["id"])
                 if not record or record["state"] != "running":
                     info["state"] = record["state"] if record else "cancelled"
@@ -466,6 +471,7 @@ class Voyager:
                 chests = self.action_agent.render_chest_observation()
                 future = self._curriculum_future = Future()
                 self._discard_curriculum = False
+                self._curriculum_revision = controller.snapshot().get("revision")
                 def propose(pending=future, observation=events, chest_observation=chests):
                     try:
                         pending.set_result(self.curriculum_agent.propose_next_task(
@@ -477,6 +483,10 @@ class Voyager:
                 controller.set_planning(True)
                 planning_reported = True
             if future.done() and not self._discard_curriculum:
+                expected_revision = getattr(self, "_curriculum_revision", None)
+                if expected_revision is not None and expected_revision != controller.snapshot().get("revision"):
+                    self._discard_curriculum = True
+                    continue
                 self._curriculum_future = None
                 controller.set_planning(False)
                 return None, future.result()

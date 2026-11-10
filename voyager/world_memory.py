@@ -320,7 +320,10 @@ class WorldMemory:
         visible = any(p.get("username", "").casefold() == actor.casefold() and p.get("position") for p in players)
         return current if visible else None
 
-    def apply_chat(self, operations, *, actor, private, dimension, user_text, message_id, player_locations=()):
+    def apply_chat(self, operations, *, actor, private, dimension, user_text, message_id, player_locations=(), current_location=False, tool_request=False):
+        # Native tools interpret explicit intent semantically from a fresh message.
+        # The legacy JSON path retains lexical intent checks. Both paths enforce
+        # scope, authorship, coordinate grounding and evidence below.
         if not isinstance(operations, list):
             raise ValueError("memory_ops must be a list")
         results = []
@@ -333,7 +336,7 @@ class WorldMemory:
             try:
                 operation = normalize_memory_operation(operation)
                 op = operation["op"]
-                here = CURRENT_PLAYER_LOCATION.search(user_text.replace("’", "'"))
+                here = current_location or CURRENT_PLAYER_LOCATION.search(user_text.replace("’", "'"))
                 if op == "remember" and operation.get("kind") in ("place", "resource", "storage", "project", "ownership") and here:
                     # A valid "remember here" needs a location even if the model omitted data.position.
                     operation["data"].setdefault("position", None)
@@ -352,9 +355,9 @@ class WorldMemory:
                             raise ValueError("Please provide coordinates or identify an existing remembered location")
                 memory_actor = actor if private else None
                 if op in ("forget", "correct", "rename"):
-                    if op == "forget" and not re.search(r"\b(forget|erase|delete|remove|dimentica|scorda|cancella)\b", user_text, re.I):
+                    if op == "forget" and not tool_request and not re.search(r"\b(forget|erase|delete|remove|dimentica|scorda|cancella)\b", user_text, re.I):
                         raise ValueError("Forgetting requires an explicit player request")
-                    if op in ("correct", "rename") and not re.search(r"\b(actually|correct|rename|change|instead|update|edit|correggi|rinomina|anzi|realtà)\b", user_text, re.I):
+                    if op in ("correct", "rename") and not tool_request and not re.search(r"\b(actually|correct|rename|change|instead|update|edit|correggi|rinomina|anzi|realtà)\b", user_text, re.I):
                         raise ValueError("Editing memory requires an explicit correction or rename")
                     with self.lock:
                         old = self._get(operation.get("id"), actor if private else None)
@@ -387,7 +390,7 @@ class WorldMemory:
                         existing = self.db.execute("SELECT * FROM records WHERE world=? AND scope=? AND kind=? AND record_key=? AND dimension IS ?", (self.world, self.scope(memory_actor), kind, key, remembered_dimension)).fetchone()
                         if existing and not self._editable(existing, actor):
                             raise ValueError("Only the original player or an operator can replace that note")
-                    revive = bool(re.search(r"\b(remember|ricorda)\b", user_text, re.I) and not re.search(r"\b(do you|what|where)\b", user_text, re.I))
+                    revive = tool_request or bool(re.search(r"\b(remember|ricorda)\b", user_text, re.I) and not re.search(r"\b(do you|what|where)\b", user_text, re.I))
                     result = self.put(kind=kind, key=key, name=name, data=operation.get("data", {}),
                                       dimension=remembered_dimension, actor=memory_actor, source="inferred" if operation.get("basis") == "inferred" else "reported", reporter=actor,
                                       evidence={"message": user_text[:2000], "event": message_id}, related_ids=operation.get("related_ids", []), revive=revive)

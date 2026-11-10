@@ -1,3 +1,4 @@
+const TOOL_CATALOG = require("../../../conversation_tools.json");
 // Player-facing help and direct command names live here. Update this catalog when
 // adding/removing controls, memory operations, or action primitives.
 const CONTROLS = [
@@ -5,7 +6,7 @@ const CONTROLS = [
     { name: "stop", usage: "stop", description: "cancel active work and halt new work until resume" },
     { name: "pause", usage: "pause", description: "pause work, keeping progress" },
     { name: "resume", usage: "resume", description: "resume halted work" },
-    { name: "cancel", usage: "cancel / cancel task <id>", description: "cancel active or specified queued work" },
+    { name: "cancel", usage: "cancel / cancel the current task / cancel task <id>", description: "cancel active or specified queued work" },
     { name: "status", usage: "status", description: "show current work", phrases: ["what are you doing"] },
     { name: "queue", usage: "queue", description: "list tasks and IDs", phrases: ["what's queue", "what's the queue", "what's task queue", "what's the task queue", "what is queue", "what is the queue", "what is task queue", "what is the task queue"] },
 ];
@@ -18,6 +19,9 @@ const MEMORY = [
     { op: "notes", examples: ["remember I prefer spruce", "remember this chest belongs to Alice", "remember we finished the bridge", "remember there is coal at 100,64,-20"] },
 ];
 const ACTIONS = [
+    { primitive: "resolveTarget", example: "come behind me / go beside the chest I am looking at / go to home" },
+    { primitive: "followPlayer", example: "follow me at 3 blocks / stop following / resume following" },
+    { primitive: "stayAt", example: "stay here / stay at home" },
     { primitive: "moveToPlayer", example: "come here" },
     { primitive: "moveToPosition", example: "meet me at 100,64,-20" },
     { primitive: "waitForItem", example: "come here; I'll give you a pickaxe" },
@@ -45,10 +49,11 @@ function renderCommandHelp(username) {
     return [
         `Commands for ${username}: say cmds in public or /msg ${username} cmds. No slash prefix needed in public.`,
         "[Immediate controls] " + CONTROLS.map(c => `${c.usage}: ${c.description}`).join("; ") + ".",
-        "Control alternatives: what are you doing?; what's the queue?; stop building; pause working; resume my task; continue working. Only requesters/operators control player tasks.",
+        "Control alternatives: what are you doing?; what's the queue?; stop building; cancel the current task; pause working; resume my task; continue working. Only requesters/operators control player tasks.",
         "[Memory requests] " + MEMORY.flatMap(m => m.examples).join("; ") + ".",
         "Current-location saves use YOUR loaded coordinates; no label saves as <player>'s saved location. Private memory stays private. If your position is unknown, provide coordinates and dimension.",
         "[Gameplay requests] " + ACTIONS.map(a => a.example).join("; ") + ".",
+        "[Natural-language tools] " + TOOL_CATALOG.map(t => t.examples.join("; ")).join("; ") + ". The AI calls tools and checks their results; you do not need these exact sentences.",
         "[Chat preferences] " + SOCIAL.join("; ") + ". Private messages and public username mentions still require replies.",
         `Other than immediate controls and current-location saves, these are AI-interpreted request examples, not rigid commands. For a required reply, use /msg ${username} <request> or mention ${username} publicly. Work is queued and attempted; materials, visible targets and reachable locations are needed. Building needs size/materials/location (up to 128 blocks per batch); movement stays in the current dimension.`,
     ].join("\n");

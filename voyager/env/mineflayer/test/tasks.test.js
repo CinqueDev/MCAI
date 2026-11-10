@@ -204,7 +204,7 @@ test("interrupted inventory operations require review rather than being replayed
     );
 });
 
-test("journal preserves queue, progress and paused recovery after process restart", () => {
+test("journal automatically requeues safe work with progress after process restart", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mcai-tasks-"));
     try {
         const journalPath = path.join(directory, "tasks.json");
@@ -215,12 +215,12 @@ test("journal preserves queue, progress and paused recovery after process restar
         first.enqueue({ task: "Second task", requester: "Bob" });
         first.save();
         const second = fixture({ journalPath }).controller;
-        assert.equal(second.get(task.id).state, "paused");
-        assert.equal(second.suspended, true);
+        assert.equal(second.get(task.id).state, "queued");
+        assert.equal(second.suspended, false);
         assert.equal(second.get(task.id).actions[0].results[0].type, "place");
         assert.equal(
             second.records.filter((t) => t.state === "queued").length,
-            1
+            2
         );
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
@@ -356,4 +356,93 @@ test("queue and status explain intentional pauses and normal planning", async ()
     await controller.control("pause", "Alice");
     assert.match(await controller.control("queue", "Alice"), /resume is needed/);
     assert.match(await controller.control("cancel", "Alice", task.id), /remains paused/);
+});
+
+test('current-task and named cancellations interrupt real work and acknowledge controller state', async () => {
+    for (const text of ['cancel the current task', 'Can you cancel the current task?']) {
+        const { bot, controller } = fixture();
+        const task = start(controller, { task: 'Break the beehive near Alice' });
+        const lease = begin(controller, task);
+        const walking = controller.context.run(lease, () => bot.pathfinder.goto({}));
+        const interrupted = assert.rejects(walking, TaskInterrupted);
+        bot.emit('whisper', 'Alice', text);
+        await interrupted;
+        await settle();
+        assert.equal(controller.get(task.id).state, 'cancelled');
+        assert.ok(bot.results[0].startsWith('/msg Alice Cancelled'));
+        assert.deepEqual(bot.conversation.snapshot().pending, []);
+    }
+});
+
+test('named controls clarify ambiguity and cannot select another player or expose private tasks', async () => {
+    const { controller } = fixture();
+    const one = controller.enqueue({ task: 'Break a beehive', requester: 'Alice' });
+    const two = controller.enqueue({ task: 'Find a beehive', requester: 'Alice' });
+    controller.enqueue({ task: 'Secret beehive location', requester: 'Bob', recipient: 'Bob' });
+    const before = controller.revision;
+    assert.match(await controller.control('cancel', 'Alice', null, 'public', 'beehive'), /More than one/);
+    assert.equal(one.state, 'queued');
+    assert.equal(two.state, 'queued');
+    assert.equal(controller.revision, before);
+    assert.match(await controller.control('cancel', 'Alice', null, 'public', 'secret'), /No active or queued/);
+    assert.match(await controller.control('cancel', 'Bob', null, 'public', 'beehive'), /No active or queued/);
+    assert.match(await controller.control('cancel', 'Alice', null, 'public', 'break beehive'), /Cancelled/);
+    assert.equal(one.state, 'cancelled');
+    assert.equal(two.state, 'queued');
+    for (const text of ['Alice said cancel the beehive task', "don't cancel the beehive task", 'if needed cancel the beehive task']) {
+        assert.equal(parseControl(text, 'Voyager'), null);
+    }
+});
+
+test('rejoining preserves manual pauses but only blocks automatic recovery for uncertain item operations', async () => {
+    for (const kind of ['manual', 'transfer', 'safe']) {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcai-rejoin-'));
+        try {
+            const journalPath = path.join(directory, 'tasks.json');
+            const { bot, controller } = fixture({ journalPath });
+            const task = start(controller);
+            const lease = begin(controller, task);
+            if (kind === 'manual') await controller.control('pause', 'Alice');
+            if (kind === 'transfer') {
+                lease.action.operations.push({ name: 'toss', irreversible: true, state: 'started' });
+                controller.save();
+            }
+            bot.emit('end');
+            const recovered = fixture({ journalPath }).controller;
+            assert.equal(recovered.get(task.id).state, kind === 'safe' ? 'queued' : 'paused');
+            assert.equal(recovered.suspended, kind !== 'safe');
+            if (kind === 'transfer') {
+                assert.equal(recovered.get(task.id).needsReview, true);
+                assert.match(await recovered.control('resume', 'Alice'), /inventory review/);
+            }
+            // A callback from the disconnected generation cannot overwrite the new journal.
+            controller.finishAction(lease, []);
+            const again = fixture({ journalPath }).controller;
+            assert.equal(again.get(task.id).state, recovered.get(task.id).state);
+        } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+    }
+});
+
+test('native control receipts are idempotent, durable and reject stale or ambiguous selections', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcai-control-receipts-'));
+    try {
+        const journalPath = path.join(directory, 'tasks.json');
+        const controller = fixture({ journalPath }).controller;
+        const first = start(controller, { task: 'Break the beehive' });
+        const request = { command: 'cancel', sender: 'Alice', target: 'beehive', channel: 'private', key: 'receipt', expectedRevision: controller.revision };
+        const receipt = await controller.executeControl(request);
+        assert.equal(receipt.ok, true);
+        assert.equal(first.state, 'cancelled');
+        const next = controller.enqueue({ task: 'Break another beehive', requester: 'Alice' });
+        controller.claim(next.id);
+        assert.deepEqual(await controller.executeControl(request), receipt);
+        assert.equal(next.state, 'running');
+        const recovered = fixture({ journalPath }).controller;
+        assert.deepEqual(await recovered.executeControl(request), receipt);
+        assert.equal(recovered.get(next.id).state, 'queued');
+        const stale = await recovered.executeControl({ ...request, key: 'stale' });
+        assert.equal(stale.ok, false);
+        assert.match(stale.message, /Work changed/);
+        await assert.rejects(recovered.executeControl({ ...request, command: 'stop' }), /reused/);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

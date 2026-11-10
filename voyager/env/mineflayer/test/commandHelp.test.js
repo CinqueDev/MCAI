@@ -45,6 +45,8 @@ test('new action primitive files must be documented or explicitly classified as 
         for (const example of item.examples || [item.example]) assert.ok(help.includes(example));
     }
     for (const example of SOCIAL) assert.ok(help.includes(example));
+    const tools = require('../../../conversation_tools.json');
+    for (const tool of tools) for (const example of tool.examples) assert.ok(help.includes(example));
 });
 
 test('public and private cmds deliver the complete help through the right channel without a task controller', async () => {

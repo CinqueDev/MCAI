@@ -38,25 +38,31 @@ class DeepSeekChat:
             max_retries=3,
         )
 
-    def __call__(self, messages):
+    def complete(self, messages, tools=None):
+        """Native tool-call turn; callers execute tools and return their receipts."""
         roles = {"system": "system", "human": "user", "ai": "assistant"}
+        options = {}
+        if tools:
+            options["tools"] = tools
+            options["tool_choice"] = "auto"
         response = self.client.chat.completions.create(
             model=self.model_name,
-            messages=[
-                {"role": roles[message.type], "content": message.content}
-                for message in messages
-            ],
+            messages=[message if isinstance(message, dict) else
+                      {"role": roles[message.type], "content": message.content} for message in messages],
             temperature=self.temperature,
-            # Keep Voyager's temperature controls and avoid reasoning-only output.
             extra_body={"thinking": {"type": "disabled"}},
+            **options,
         )
         if not response.choices:
             raise ValueError("DeepSeek returned no completion choices.")
         choice = response.choices[0]
+        if choice.finish_reason == "tool_calls" and tools and choice.message.tool_calls:
+            return choice.message
         if choice.finish_reason != "stop":
-            raise ValueError(
-                f"DeepSeek completion did not finish normally: {choice.finish_reason}"
-            )
+            raise ValueError(f"DeepSeek completion did not finish normally: {choice.finish_reason}")
         if not choice.message.content or not choice.message.content.strip():
             raise ValueError("DeepSeek returned an empty answer.")
-        return AIMessage(content=choice.message.content)
+        return choice.message
+
+    def __call__(self, messages):
+        return AIMessage(content=self.complete(messages).content)

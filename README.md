@@ -266,6 +266,15 @@ Run normally with `python run.py`; no tag or chat command prefix is required.
   public/private channel. Asking a question or discussing a plan need not queue work.
   Active mining/combat is not interrupted mid-action.
 
+The conversation model uses native DeepSeek tool calls for task status/control,
+queuing Minecraft work, memory lookup/updates, world-reference resolution, and
+persistent following/staying. Ordinary language selects these tools; you do not
+need to memorize sentences. The application binds the caller and reply channel,
+executes the tool, and feeds the receipt back to the model. Mutating tool receipts
+supply the acknowledgement, so a failed cancellation cannot be reported as a
+success. Short controls such as `stop` remain immediate even while a model call
+is in progress. The protocol follows [DeepSeek's tool-call documentation](https://api-docs.deepseek.com/guides/tool_calls/).
+
 Long replies are split into word-aware chunks and sent about 1.2 seconds apart.
 Each private chunk uses `/msg` to the original sender; retries resume the same
 reply instead of repeating chunks already sent.
@@ -290,7 +299,9 @@ the incoming public/private channel, and splits long replies into paced messages
 The list distinguishes direct controls from AI-interpreted request examples.
 
 Help is maintained in `voyager/env/mineflayer/lib/commandCatalog.js`; direct
-command names and aliases are registered from that same catalog. Update it in the
+command names and aliases are registered from that same catalog. Native tool
+schemas and examples live in `voyager/conversation_tools.json`, which also feeds
+the help response. Update it in the
 same change as any player-facing capability. The command-help tests flag action
 primitive files missing from the catalog, including newly added helpers.
 
@@ -308,10 +319,14 @@ states and verified receipts are saved atomically under `<ckpt_dir>/tasks/`.
 Journal files use the current host, login identifier and `world_id`, or the port
 when no world ID is configured. Reuse the same checkpoint and identity for recovery.
 Setting/changing an explicit world ID selects a separate task journal. Queued work survives restart;
-previously running work returns paused, with a terminal message explaining how to
-resume. Queue/status replies distinguish paused work from normal planning. Player
+safe previously running work is requeued automatically with a new execution
+generation, fresh observations, and its prior action receipts. Explicit player
+pauses/stops and safety halts remain in effect. Uncertain drops/transfers or
+crafting/consumption operations remain paused for review; they are never replayed
+automatically. Older checkpoints paused solely by reconnect recovery are migrated
+to this policy. Queue/status replies distinguish paused work from normal planning. Player
 requests are dispatched while curriculum suggestions are generated in the background;
-abandoned suggestions are discarded. Resume replans against observations and
+abandoned suggestions are discarded, including suggestions made before a movement mode changed execution state. Resume replans against observations and
 prior receipts, rather than continuing an old JavaScript stack.
 
 Cancellation is cooperative: movement and bounded waits are interrupted; an
@@ -327,6 +342,9 @@ Chat requests now have explicit action helpers:
 
 | Request | Helper | Behavior |
 | --- | --- | --- |
+| “Follow me at 3 blocks” | `followPlayer(bot, username, distance)` | Continuous following until stopped, interrupted by danger, or the player is lost. |
+| “Stay here” / “stay at home” | `stayAt(bot, reference)` | Hold a resolved position; yield temporarily to foreground requests. |
+| “Come behind me” / “beside that chest” / “go home” | `resolveTarget` / `moveToTarget` | Resolve a typed reference or ask for clarification; never invent an unseen target. |
 | “Come here” | `moveToPlayer(bot, username)` | Walk to a currently visible player and face them. |
 | “Meet me at 100, 64, -20” | `moveToPosition(bot, position)` | Walk to coordinates in the current dimension. |
 | “I'll give you a pickaxe” | `waitForItem(bot, names, count, timeoutMs)` | Stop and wait briefly for an inventory increase after approaching. |
@@ -344,6 +362,23 @@ paths have bounded timeouts and failures are reported. Giving verifies the drop,
 not that the intended player picked it up. Building requires real inventory items,
 solid supports and empty target cells; it can resume by skipping matching blocks.
 Block orientation/state-specific blueprints are not supported by this helper yet.
+
+Persistent follow/stay modes use the durable task controller's movement lease.
+Foreground player work has priority over these modes; autonomous curriculum waits.
+A mode resumes automatically after foreground work and after a safe reconnect.
+You can pause/stop/cancel it, or ask to stop/resume following in ordinary language.
+Following stops moving immediately when the loaded player disappears, waits up to
+15 seconds for them to reappear, and reports a lost player if they remain absent.
+A route with no progress for 30 seconds fails clearly. Low health/lava pauses the
+mode for safety. Modes do not tunnel through buildings or place scaffolding.
+
+The shared resolver supports players, request-time “here”, coordinates, behind a
+loaded player, pointed-at blocks/faces, supported spaces beside blocks, loaded
+entities and remembered landmarks. Pointing requires a loaded player's observed
+head direction and eye height and uses a bounded 6-block raycast through loaded
+chunks. Ambiguous entities/landmarks, stale memory, unknown dimensions and
+cross-dimension targets require clarification. Native target tools and generated
+actions receive only memory visible in their original public/private scope.
 
 Each helper records structured action evidence for the planner and task critic, so
 successful interactions can be checked against the requested coordinates, player,
@@ -412,8 +447,8 @@ Examples of memory-only chat requests:
 
 - “Remember here as home.” The location comes from the requesting player's loaded
   entity, captured when the message arrives, with a loaded-entity fallback if
-  the tab-list link is missing. Common remember-here requests are handled directly
-  without a model call. If your position remains unknown, it asks for coordinates.
+  the tab-list link is missing. In native-tool mode the model calls `remember_location`; captured coordinates
+  are resolved by the application without requiring a particular phrase. If your position remains unknown, it asks for coordinates.
 - “Remember home at 100, 64, -20.” This is saved as a player report, not a direct observation. If the player is
   not visible and supplies no dimension, the dimension remains unknown.
 - “What do you remember about the kitchen chest?”
@@ -429,7 +464,8 @@ coordinates before applying them. Private edits stay private; a private request 
 also forget the player's own public fact without publishing the deletion request.
 Operators can edit public notes, but cannot retrieve another player's private notes.
 Memory changes are applied before sending the acknowledgement. Ambiguous names need
-clarification; this phase does not yet implement general world-reference targeting.
+clarification. World-reference tools resolve supported concrete references; unavailable
+head direction or unloaded targets still require coordinates.
 
 Existing `conversation/memory.json` notes and `action/chest_memory.json` entries are
 imported once into the first active namespace. Originals are preserved as backups
