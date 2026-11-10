@@ -214,7 +214,9 @@ class ActionAgent:
 
                 code_pattern = re.compile(r"```(?:javascript|js)(.*?)```", re.DOTALL)
                 code = "\n".join(code_pattern.findall(message.content))
-                parsed = babel.parse(code)
+                # Babel 8 requires a callback for parse(); both Babel 7 and 8
+                # expose parseSync for this synchronous Python/JS bridge.
+                parsed = babel.parseSync(code)
                 functions = []
                 assert len(list(parsed.program.body)) > 0, "No functions found"
                 for i, node in enumerate(parsed.program.body):

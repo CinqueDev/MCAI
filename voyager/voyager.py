@@ -297,6 +297,7 @@ class Voyager:
         else:
             assert isinstance(parsed_result, str)
             self.recorder.record([], self.task)
+            self.messages[-1].content += f"\n\n{parsed_result}\nPlease correct the code and try again."
             print(f"\033[34m{parsed_result} Trying again!\033[0m")
         assert len(self.messages) == 2
         self.action_agent_rollout_num_iter += 1
