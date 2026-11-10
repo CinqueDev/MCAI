@@ -113,7 +113,7 @@ class MemoryOperationSchemaTests(unittest.TestCase):
         self.assertEqual(row["data"]["position"], {"x": -12, "y": 70, "z": 19})
         self.assertEqual(self.memory.search("home", actor="Bob")[0]["id"], row["id"])
 
-    def test_location_write_without_a_label_asks_for_a_name(self):
+    def test_location_write_without_a_label_saves_under_a_player_specific_name(self):
         llm = Mock()
         worker = ConversationWorker(Mock(), llm=llm, world_memory=self.memory, ckpt_dir=self.directory.name)
         worker.request = Mock(return_value={"delivered": True})
@@ -121,8 +121,48 @@ class MemoryOperationSchemaTests(unittest.TestCase):
                        {"id": 1, "sender": "Alice", "channel": "private", "text": "save my location",
                         "locationMemory": {"name": None}, "requesterLocation": {"x": 1, "y": 2, "z": 3}})
         llm.assert_not_called()
-        self.assertIn("call this place", worker.request.call_args.args[0]["text"])
-        self.assertEqual(self.memory.search(actor="Alice"), [])
+        self.assertIn("Saved Alice's saved location at (1, 2, 3)", worker.request.call_args.args[0]["text"])
+        self.assertEqual(self.memory.search(actor="Alice")[0]["data"]["position"], {"x": 1, "y": 2, "z": 3})
+        self.assertEqual(self.memory.search(), [])  # A private save stays private.
+
+    def test_natural_current_location_requests_save_receipt_coordinates_without_a_model(self):
+        llm = Mock()
+        worker = ConversationWorker(Mock(), llm=llm, world_memory=self.memory, ckpt_dir=self.directory.name)
+        worker.request = Mock(return_value={"delivered": True})
+        phrases = [
+            "Can you remember the location I am currently at?",
+            "Can you remember the location I'm currently at?",
+            "Please save where I’m standing right now.",
+            "remember where I currently am",
+            "Hey Voyager, save the place I am at, please!",
+            "save the location that I am currently at",
+        ]
+        for index, text in enumerate(phrases):
+            with self.subTest(text=text):
+                worker.respond({"session": "natural", "history": [], "username": "Voyager",
+                    "state": {"dimension": "the_nether"}, "playerLocations": [
+                        {"username": "Alice", "position": {"x": 999, "y": 99, "z": 999}}]},
+                    {"id": index, "sender": "Alice", "channel": "private", "text": text,
+                     "requesterLocation": {"x": 4, "y": 64, "z": 8}, "requesterDimension": "overworld"})
+                payload = worker.request.call_args.args[0]
+                self.assertEqual(payload["recipient"], "Alice")
+                self.assertIn("Saved Alice's saved location at (4, 64, 8) in overworld", payload["text"])
+        llm.assert_not_called()
+        rows = self.memory.search(actor="Alice")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["data"]["position"], {"x": 4, "y": 64, "z": 8})
+        self.assertEqual(rows[0]["dimension"], "overworld")
+
+    def test_model_memory_operations_also_ground_natural_current_location_wording(self):
+        text = "Can you remember the location I am currently at?"
+        result = self.apply({"op": "remember", "kind": "place", "name": "current spot",
+                             "data": {"position": {"x": 999, "y": 99, "z": 999}}}, text=text)
+        self.assertTrue(result[0]["ok"], result)
+        self.assertEqual(self.memory.get(result[0]["id"], "Alice")["data"]["position"], {"x": 4, "y": 64, "z": 8})
+        missing = self.apply({"op": "remember", "kind": "place", "name": "unknown spot"},
+                             text=text, message_id="missing", locations=[])
+        self.assertFalse(missing[0]["ok"])
+        self.assertIn("Your location is unknown", missing[0]["error"])
 
     def test_failed_readback_does_not_claim_a_location_was_saved(self):
         worker = ConversationWorker(Mock(), llm=Mock(), world_memory=self.memory, ckpt_dir=self.directory.name)

@@ -89,3 +89,29 @@ test('location parser handles explicit named writes without mistaking recall or 
         assert.equal(parseLocationMemory(text, 'Voyager'), null, text);
     }
 });
+
+test('natural current-location requests are required and capture coordinates without a name or tag', () => {
+    const { bot, chat } = fixture();
+    bot.game = { dimension: 'overworld' };
+    bot.entities = { 1: { username: 'Alice', type: 'player', position: { x: 4, y: 64, z: 8 } } };
+    const phrases = [
+        'Can you remember the location I am currently at?',
+        "Can you remember the location I'm currently at?",
+        'Please save where I’m standing right now.',
+        'remember where I currently am',
+        'Hey Voyager, save the place I am at, please!',
+        'save the location that I am currently at',
+    ];
+    for (const text of phrases) {
+        bot.emit('chat', 'Alice', text);
+        const message = chat.snapshot().pending.at(-1);
+        assert.deepEqual(parseLocationMemory(text, 'Voyager'), { name: null }, text);
+        assert.equal(message.text, text);
+        assert.deepEqual(message.requesterLocation, { x: 4, y: 64, z: 8 });
+        assert.equal(message.requesterDimension, 'overworld');
+    }
+    for (const text of ["Do you remember the location I am currently at?", "Don't save where I'm standing", 'remember where Bob is']) {
+        assert.equal(parseLocationMemory(text, 'Voyager'), null, text);
+    }
+    assert.deepEqual(parseLocationMemory('Remember the location I am currently at as home'), { name: 'home' });
+});

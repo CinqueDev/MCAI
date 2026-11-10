@@ -18,6 +18,18 @@ SOURCES = {"observed", "reported", "inferred", "legacy"}
 TTL = {"resource": 1800, "storage": 300, "place": 86400, "experience": None,
        "project": None, "preference": None, "ownership": None}
 
+# Shared by request parsing and coordinate grounding so accepted requests cannot
+# subsequently be rejected for using a different description of the same place.
+CURRENT_PLAYER_PLACE = (
+    r"(?:here|this (?:location|place|spot|position)|"
+    r"my (?:current )?(?:location|position|coordinates|coords)|"
+    r"(?:the )?(?:location|place|spot|position) (?:where |that )?"
+    r"I(?: am|'m) (?:currently )?(?:at|in|standing)|"
+    r"where I(?: am|'m)(?: (?:currently )?(?:standing|located))?|"
+    r"where I currently am)(?: (?:right )?now)?"
+)
+CURRENT_PLAYER_LOCATION = re.compile(r"\b(?:" + CURRENT_PLAYER_PLACE + r"|qui|qua)\b", re.I)
+
 
 def position(value):
     if value is None:
@@ -321,13 +333,13 @@ class WorldMemory:
             try:
                 operation = normalize_memory_operation(operation)
                 op = operation["op"]
-                if op == "remember" and operation.get("kind") in ("place", "resource", "storage", "project", "ownership") and re.search(r"\b(here|qui|qua|this (?:location|place|spot|position)|my (?:current )?(?:location|position|coordinates|coords)|where I am)\b", user_text, re.I):
+                here = CURRENT_PLAYER_LOCATION.search(user_text.replace("’", "'"))
+                if op == "remember" and operation.get("kind") in ("place", "resource", "storage", "project", "ownership") and here:
                     # A valid "remember here" needs a location even if the model omitted data.position.
                     operation["data"].setdefault("position", None)
                 if op in ("remember", "correct") and "position" in operation["data"]:
                     supplied = position(operation["data"]["position"])
                     numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", user_text)]
-                    here = re.search(r"\b(here|qui|qua|this (?:location|place|spot|position)|my (?:current )?(?:location|position|coordinates|coords)|where I am)\b", user_text, re.I)
                     if here and (len(numbers) < 3 or supplied is None):
                         player = next((p for p in player_locations if p.get("username", "").casefold() == actor.casefold()), {})
                         supplied = position(player.get("position"))

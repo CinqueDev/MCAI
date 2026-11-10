@@ -392,7 +392,10 @@ Explicit requests such as “save my coords as home” stay pending until answer
 even without mentioning the bot. The bot uses your loaded player coordinates
 captured when the request arrives and confirms the coordinates read back from
 memory. If your entity is unavailable, it asks for coordinates rather than using
-its own position. A request without a label asks what to call the place.
+its own position. Requests such as “Can you remember the location I am currently
+at?” need no label: they save as `<player>'s saved location`, replacing that
+player's previous default saved location in the same conversation scope and
+dimension. Explicit labels such as “home” remain separate.
 
 Examples of memory-only chat requests:
 
