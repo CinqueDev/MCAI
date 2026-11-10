@@ -9,5 +9,6 @@
   "ckpt_dir": "ckpt",
   "resume": false,
   "chat_enabled": true,
-  "task_operators": []
+  "task_operators": [],
+  "world_id": null
 }

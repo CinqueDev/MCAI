@@ -30,7 +30,7 @@ async function buildStructure(bot, blocks) {
         if (bot.blockAt(position)?.name !== block.name) throw new Error(`Build verification failed at ${position}`);
     }
     const result = { type: "build", blocks: blocks.length,
-        blueprint: blocks.map(b => ({ name: b.name, position: { ...b.position } })), verified: true };
+        blueprint: blocks.map(b => ({ name: b.name, position: { ...b.position } })), observedAt: Date.now() / 1000, verified: true };
     (bot.actionResults ||= []).push(result);
     return result;
 }

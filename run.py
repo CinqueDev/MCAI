@@ -29,6 +29,7 @@ DEFAULTS = {
     "resume": False,
     "chat_enabled": True,
     "task_operators": [],
+    "world_id": None,
 }
 
 
@@ -45,6 +46,7 @@ def parse_settings(argv=None):
     parser.add_argument("--mc-profiles-folder", default=argparse.SUPPRESS)
     parser.add_argument("--mc-pause-mode", choices=("auto", "none", "mod", "tick"),
                         default=argparse.SUPPRESS)
+    parser.add_argument("--world-id", default=argparse.SUPPRESS, help="Stable world identity; change it for a new/reset world")
     parser.add_argument("--ckpt-dir", default=argparse.SUPPRESS)
     parser.add_argument("--task-operators", nargs="+", default=argparse.SUPPRESS, help="Minecraft usernames allowed to control other players tasks")
     parser.add_argument("--chat-enabled", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
@@ -77,7 +79,7 @@ def parse_settings(argv=None):
     for key in ("mc_host", "mc_profiles_folder", "ckpt_dir", "mc_auth", "mc_pause_mode"):
         if not isinstance(settings[key], str) or not settings[key].strip():
             parser.error(f"{key} must be a non-empty string")
-    for key in ("mc_username", "mc_version"):
+    for key in ("mc_username", "mc_version", "world_id"):
         if settings[key] is not None and (not isinstance(settings[key], str) or not settings[key].strip()):
             parser.error(f"{key} must be a non-empty string or null")
     if settings["mc_auth"] not in ("offline", "microsoft"):

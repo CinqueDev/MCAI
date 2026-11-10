@@ -1,12 +1,12 @@
 # Cooperative agent and world memory plan
 
-Status: Phase 1 task control is implemented with simulated validation; live Minecraft validation remains pending. Phases 2–6 remain planned.
+Status: Phases 1–2 (task control and shared world memory) are implemented with simulated validation; live Minecraft validation remains pending. Phases 3–6 remain planned.
 
 ## Objective
 
 Make the agent a useful Minecraft companion that can understand references to the world, carry out requests, remember discoveries, and continue shared work across sessions. Preserve the existing public/private chat rules and separate conversation from action diagnostics.
 
-## Starting point
+## Original starting point
 
 - Chat runs independently of actions. Public mentions and private messages require replies, with private replies routed through `/msg`.
 - Helpers now cover approaching a visible player, walking to coordinates, waiting for supplies, exact item drops, giving items, verified block placement, and bounded blueprint construction.

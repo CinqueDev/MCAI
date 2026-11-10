@@ -16,6 +16,8 @@ Chests: If the task requires me to place items in a chest, you can find chest in
 Task: The objective I need to accomplish.
 Context: The context of the task.
 
+World memory is contextual history, not proof that the current task succeeded. Recheck stale/unverified records and use current verified action evidence.
+
 For movement, dropping, delivery, placement, and construction, inspect Action results and Players:
 - Only verified results matching the requested player, item, count, destination, or blueprint prove an interaction succeeded. A helper name or a plan is not proof.
 - "Come here, I will give you a pickaxe" means approach that player and stop; the bot does not need to craft a pickaxe. Confirm an approach_player result for the right player.

@@ -218,3 +218,5 @@ class ConversationLifecycleTests(unittest.TestCase):
         agent.learn()
         agent.curriculum_agent.propose_next_task.assert_not_called()
         agent.conversation.report_task.assert_called_once_with(request, True)
+        agent.skill_manager.add_new_skill.assert_not_called()
+        agent.curriculum_agent.update_exploration_progress.assert_not_called()

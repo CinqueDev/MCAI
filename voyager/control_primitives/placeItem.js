@@ -12,7 +12,7 @@ async function placeItem(bot, name, position) {
     if (!existing) throw new Error("Destination chunk is not loaded");
     if (existing.name === name) {
         bot.checkTask?.();
-    const result = { type: "place", block: name, position, alreadyPresent: true, verified: true };
+    const result = { type: "place", block: name, position, alreadyPresent: true, observedAt: Date.now() / 1000, verified: true };
         (bot.actionResults ||= []).push(result);
         return result;
     }
@@ -49,7 +49,7 @@ async function placeItem(bot, name, position) {
     }
     if (bot.blockAt(position)?.name !== name) throw new Error(`Placement of ${name} at ${position} was not confirmed`);
     bot.checkTask?.();
-    const result = { type: "place", block: name, position, alreadyPresent: false, verified: true };
+    const result = { type: "place", block: name, position, alreadyPresent: false, observedAt: Date.now() / 1000, verified: true };
     (bot.actionResults ||= []).push(result);
     bot.save(`${name}_placed`);
     return result;

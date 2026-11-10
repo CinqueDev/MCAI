@@ -17,6 +17,7 @@ function bridge() {
             if (["minecraft-data", "mineflayer-pathfinder", "vec3"].includes(name)) return require(name);
             if (name === "express") return () => app;
             if (name === "body-parser") return { json() {}, urlencoded() {} };
+            if (name === "./lib/worldObservations") return require("../lib/worldObservations");
             if (name === "./lib/tasks") return require("../lib/tasks");
             if (name === "./lib/conversation") return require("../lib/conversation");
             if (name === "./lib/connection") return require("../lib/connection");

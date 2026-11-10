@@ -54,6 +54,11 @@ class CriticAgent:
         observation += "Players: " + json.dumps(status.get("players", [])) + "\n\n"
         observation += "Action results: " + json.dumps(status.get("actionResults", [])) + "\n\n"
 
+        if getattr(self, "world_memory", None):
+            memories = self.world_memory.context(task + " " + context, actor=self.memory_actor,
+                dimension=status.get("dimension"), position_hint=status.get("position"), limit=8)
+            observation += "World memory (context, never proof this task succeeded): " + json.dumps(memories) + "\n\n"
+
         observation += f"Biome: {biome}\n\n"
 
         observation += f"Time: {time_of_day}\n\n"

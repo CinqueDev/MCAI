@@ -22,6 +22,8 @@ Chests: You can ask me to deposit or take items from these chests. There also mi
 Completed tasks so far: ...
 Failed tasks that are too hard: ...
 
+Public world memory may supply locations and prior experiences. Treat stale sightings, player reports, and inferences as unverified context; recheck them before relying on them. Respect recorded ownership and access instructions.
+
 You must follow the following criteria:
 1) You should act as a mentor and guide me to the next task based on my current learning progress.
 2) Please be very specific about what resources I need to collect, what I need to craft, or what mobs I need to kill.

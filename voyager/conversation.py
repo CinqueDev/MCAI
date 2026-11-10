@@ -33,7 +33,9 @@ mentions still require replies. You can initiate when invited to decide, but do 
 invent an event just to have something to say.
 
 Remember useful player preferences, shared projects and ownership boundaries with
-short memory notes attributed to the relevant player. Return the complete updated list, at most 20 notes. Private notes
+short memory notes attributed to the relevant player. In legacy note mode return the
+complete updated list, at most 20 notes; the structured memory policy below replaces
+that behavior when enabled. Private notes
 are only available in that player's private conversation; never disclose them publicly.
 For an explicit, actionable request addressed to you in new_messages or required_message,
 you may return a task describing
@@ -64,9 +66,40 @@ whose new message requests the task, or null). No code or commands.
 """
 
 
+WORLD_MEMORY_PROMPT = """
+Structured world memory is enabled. The memory field contains scoped records, not
+an exhaustive transcript. If memory_unavailable is true, explain that you cannot
+look up stored facts right now instead of claiming they were forgotten. Read source, verification, dimension, stale, validity,
+evidence and last verification time. Player reports and imported legacy notes are
+unverified; an old ore sighting does not mean that ore is still present. Never
+invent observations, promote reported facts to verified, or reconstruct forgotten
+facts from old chat. Only the application can store directly observed evidence.
+
+Use an additional memory_ops JSON list to keep useful facts without a work task:
+- remember: kind (place/resource/storage/experience/project/preference/ownership),
+  name, optional dimension, data (note, position:{x,y,z}, owner/access, etc.), and
+  optional related_ids from available memory records. Set basis to inferred for
+  your conclusions, or reported for facts the player states; neither is observed.
+- correct: id and corrected data/name, only on an explicit player correction.
+- rename: id and name, only when a player asks to rename it.
+- forget: id, only when the player explicitly asks to forget that fact.
+Example: 'remember home at 100,64,-20' => remember kind place, name home,
+data.position with those reported coordinates. For 'remember here', resolve the
+requester's actual visible position; ask if it is unknown. Never use the bot's
+position as the player's position. Ask which record when a reference is ambiguous.
+Use record IDs for correction/forgetting; the application enforces scope and ownership.
+Private writes stay private. Public conversation cannot edit private records.
+Do not pass visibility/source claims in data. The old memory note-list output is
+ignored when structured memory is enabled: use memory_ops for durable notes.
+Recall questions need no Minecraft task. Do not claim a memory update if none was
+requested in memory_ops. Do not turn a memory-only request into queued world work.
+"""
+
+
 class ConversationWorker:
-    def __init__(self, env, *, llm=None, ckpt_dir="ckpt", task_client=None, **llm_options):
+    def __init__(self, env, *, llm=None, ckpt_dir="ckpt", task_client=None, world_memory=None, **llm_options):
         self.env = env
+        self.world_memory = world_memory
         self.llm = llm or DeepSeekChat(**llm_options)
         self.path = Path(ckpt_dir) / "conversation" / "memory.json"
         try:
@@ -75,6 +108,8 @@ class ConversationWorker:
                 self.memory = {}
         except (OSError, ValueError):
             self.memory = {}
+        if self.world_memory:
+            self.memory = {}  # Legacy JSON is a preserved migration source, not active storage.
         self.task_client = task_client
         self.tasks = Queue(maxsize=20)
         self.results = Queue()
@@ -117,6 +152,11 @@ class ConversationWorker:
         snapshot = self.request({})
         if self.stop_event.is_set():
             return
+        if self.world_memory:
+            try:
+                self.world_memory.ingest(snapshot)
+            except Exception:
+                log.exception("Could not store world observations; continuing conversation")
         if snapshot["session"] != self.session:
             self.session = snapshot["session"]
             self.cursor = 0
@@ -173,8 +213,19 @@ class ConversationWorker:
         # Queued private work must also remain out of other conversations.
         context["queued_tasks"] = [t["task"] for t in context["queued_tasks"]
                                    if t["recipient"] in (None, sender)]
+        memory_policy = ""
+        if self.world_memory:
+            state = snapshot.get("state") or {}
+            query = message["text"] if message else " ".join(m["text"] for m in context["new_messages"][-5:])
+            try:
+                context["memory"] = self.world_memory.search(query, actor=sender, position_hint=state.get("position"))
+            except Exception:
+                context["memory"] = []
+                context["memory_unavailable"] = True
+                log.exception("Could not retrieve world memory")
+            memory_policy = WORLD_MEMORY_PROMPT
         try:
-            response = self.llm([SystemMessage(content=SOCIAL_PROMPT),
+            response = self.llm([SystemMessage(content=SOCIAL_PROMPT + memory_policy),
                                  HumanMessage(content=json.dumps(context))])
             decision = json.loads(response.content)
             if not isinstance(decision, dict):
@@ -211,6 +262,26 @@ class ConversationWorker:
                 requester = next(iter(authors)) if len(authors) == 1 else None
             if not requester:
                 decision["task"] = None
+        if self.world_memory and decision.get("memory_ops"):
+            # Only fresh player input can authorize edits; old history and idle reflections cannot.
+            fresh = [message] if message else [m for m in context["new_messages"] if m["sender"] == requester]
+            if not fresh or not requester:
+                reply = "Please tell me what you want me to remember or change."
+                decision["task"] = None
+            else:
+                source = fresh[-1]
+                try:
+                    results = self.world_memory.apply_chat(decision["memory_ops"], actor=requester, private=private,
+                        dimension=(snapshot.get("state") or {}).get("dimension"), user_text=source["text"],
+                        message_id=f"{snapshot['session']}:{source['id']}", player_locations=snapshot.get("playerLocations") or [])
+                    errors = [r["error"] for r in results if not r["ok"]]
+                    if errors:
+                        reply = "I couldn't update that memory: " + errors[0]
+                        decision["task"] = None
+                except Exception:
+                    reply = "I couldn't update that memory. Please try again."
+                    decision["task"] = None
+                    log.exception("Memory update failed")
         metadata = (scope, decision, sender, requester)
         if reply and reply.strip():
             self.outbox = ({"session": snapshot["session"], "key": str(uuid.uuid4()),
@@ -235,7 +306,7 @@ class ConversationWorker:
 
     def apply_decision(self, scope, decision, recipient, requester=None):
         notes = decision.get("memory")
-        if isinstance(notes, list) and all(isinstance(n, str) for n in notes):
+        if not self.world_memory and isinstance(notes, list) and all(isinstance(n, str) for n in notes):
             self.memory[scope] = [n[:300] for n in notes[:20]]
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)

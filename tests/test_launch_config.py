@@ -19,13 +19,14 @@ class LaunchConfigTests(unittest.TestCase):
     def test_config_settings_and_cli_overrides(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self.write_config(directory, mc_version="26.1", mc_pause_mode="none",
-                                     resume=True, ckpt_dir="saved")
+                                     resume=True, ckpt_dir="saved", world_id="old-world")
             settings, env_path = run.parse_settings([
-                "--config", str(path), "--mc-port", "49532", "--no-resume", "--no-chat-enabled"])
+                "--config", str(path), "--mc-port", "49532", "--no-resume", "--no-chat-enabled", "--world-id", "new-world"])
             self.assertEqual(settings["mc_port"], 49532)
             self.assertEqual(settings["mc_version"], "26.1")
             self.assertFalse(settings["resume"])
             self.assertFalse(settings["chat_enabled"])
+            self.assertEqual(settings["world_id"], "new-world")
             self.assertEqual(settings["ckpt_dir"], str(Path(directory).resolve() / "saved"))
             self.assertEqual(env_path, Path(directory).resolve() / ".env")
 
@@ -47,7 +48,7 @@ class LaunchConfigTests(unittest.TestCase):
 
     def test_invalid_settings_fail_before_launch(self):
         for values in [{"mc_port": True}, {"mc_port": 70000}, {"resume": "false"},
-                       {"chat_enabled": "false"}, {"task_operators": "Alice"}, {"task_operators": ["bad name"]}, {"mc_version": 26.1}, {"mc_auth": "bad"},
+                       {"chat_enabled": "false"}, {"task_operators": "Alice"}, {"task_operators": ["bad name"]}, {"world_id": 42}, {"world_id": ""}, {"mc_version": 26.1}, {"mc_auth": "bad"},
                        {"mc_auth": "microsoft"}, {"mc_pause_mode": "bad"},
                        {"deepseek_api_key": "do-not-print-this"}]:
             with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:

@@ -1,4 +1,5 @@
 import os.path
+import logging
 from voyager.tasks import TaskClient
 import re
 import time
@@ -88,6 +89,8 @@ class VoyagerEnv(gym.Env):
         self.player_request = False
         self.execution = None
         self.tasks = TaskClient(self)
+        self.world_memory = None
+        self.task_requester = None
         self.task_journal_path = None
         self.task_operators = []
         self.connected = False
@@ -173,7 +176,17 @@ class VoyagerEnv(gym.Env):
             raise RuntimeError("Failed to step Minecraft server")
         returned_data = res.json()
         self.pause()
-        return json.loads(returned_data)
+        events = json.loads(returned_data)
+        self.remember_observations(events)
+        return events
+
+    def remember_observations(self, events):
+        if self.world_memory:
+            try:
+                for _, event in events:
+                    self.world_memory.ingest(event.get("status", {}))
+            except Exception:
+                logging.getLogger(__name__).exception("Could not store world observations; continuing Minecraft execution")
 
     def render(self):
         raise NotImplementedError("render is not implemented")
@@ -200,7 +213,9 @@ class VoyagerEnv(gym.Env):
             )
             if response.status_code != 200:
                 raise RuntimeError(f"Failed to observe Minecraft server: {response.text}")
-            return json.loads(response.json())
+            events = json.loads(response.json())
+            self.remember_observations(events)
+            return events
 
         self.reset_options = {
             "host": self.mc_host,
@@ -233,7 +248,9 @@ class VoyagerEnv(gym.Env):
         # All the reset in step will be soft
         self.reset_options["reset"] = "soft"
         self.pause()
-        return json.loads(returned_data)
+        events = json.loads(returned_data)
+        self.remember_observations(events)
+        return events
 
     def close(self):
         if self.conversation:

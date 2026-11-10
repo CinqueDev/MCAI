@@ -240,6 +240,11 @@ class CurriculumAgent:
                 if should_include:
                     content += observation[key]
 
+        if getattr(self, "world_memory", None):
+            status = events[-1][1]["status"]
+            memories = self.world_memory.context(actor=None, dimension=status.get("dimension"), position_hint=status.get("position"), limit=8)
+            content += "Public world memory (context only; stale/reported facts need rechecking): " + U.json_dumps(memories) + "\n\n"
+
         print(f"\033[35m****Curriculum Agent human message****\n{content}\033[0m")
         return HumanMessage(content=content)
 

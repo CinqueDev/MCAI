@@ -1,4 +1,5 @@
 const fs = require("fs");
+const { WorldObservations } = require("./lib/worldObservations");
 const { TaskController, TaskInterrupted } = require("./lib/tasks");
 const { Conversation } = require("./lib/conversation");
 const { setPaused } = require("./lib/pause");
@@ -134,6 +135,7 @@ app.post("/start", (req, res) => {
             // connectionBot.collectBlock.movements.digCost = 0;
             // connectionBot.collectBlock.movements.placeCost = 0;
 
+            connectionBot.worldObservations = new WorldObservations(connectionBot);
             obs.inject(connectionBot, [
                 OnChat,
                 OnError,

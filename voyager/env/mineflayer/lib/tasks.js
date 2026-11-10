@@ -23,6 +23,7 @@ class TaskController {
         this.records = [];
         this.suspended = false;
         this.suspendOwner = null;
+        this.observationRecipient = null;
         if (this.path && fs.existsSync(this.path)) {
             const data = JSON.parse(fs.readFileSync(this.path, "utf8"));
             if (data.version !== 1 || !Array.isArray(data.tasks))
@@ -31,6 +32,7 @@ class TaskController {
             this.revision = (data.revision || 0) + 1;
             this.suspended = Boolean(data.suspended);
             this.suspendOwner = data.suspendOwner || null;
+            this.observationRecipient = data.observationRecipient || null;
             for (const task of this.records) {
                 if (task.state === "running") {
                     task.state = "paused";
@@ -62,6 +64,7 @@ class TaskController {
                     revision: this.revision,
                     suspended: this.suspended,
                     suspendOwner: this.suspendOwner,
+                    observationRecipient: this.observationRecipient,
                     tasks: this.records,
                 },
                 null,
@@ -327,10 +330,12 @@ class TaskController {
         )
             throw new TaskInterrupted();
         if (this.suspended) throw new TaskInterrupted();
+        if (record) this.observationRecipient = record.recipient || null;
         const action = {
             id: randomUUID(),
             state: "started",
             started: new Date().toISOString(),
+            dimension: this.bot.game?.dimension || null,
             operations: [],
             results: [],
         };

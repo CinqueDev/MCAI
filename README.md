@@ -290,9 +290,9 @@ These direct controls remain available when the social model is disabled.
 
 Task IDs, requesters, channels, priorities, lifecycle states, action IDs, operation
 states and verified receipts are saved atomically under `<ckpt_dir>/tasks/`.
-Journal files are scoped to the current host, port and login identifier. Reuse the
-same checkpoint and connection settings for task recovery; explicit world identity
-and richer world memory are later roadmap work. Queued work survives restart;
+Journal files use the current host, login identifier and `world_id`, or the port
+when no world ID is configured. Reuse the same checkpoint and identity for recovery.
+Setting/changing an explicit world ID selects a separate task journal. Queued work survives restart;
 previously running work returns paused. Resume replans against observations and
 prior receipts, rather than continuing an old JavaScript stack.
 
@@ -342,14 +342,81 @@ periodic opportunities to initiate while players are online, and consume API cre
 If generation fails for a mandatory message, it sends a brief failure acknowledgement.
 Delivery retries use an idempotency key to avoid repeating a reply.
 
-Useful social notes are stored under `<ckpt_dir>/conversation/memory.json`. Public
-notes and each player's private notes have separate scopes; private messages, private
-notes, and private task descriptions are excluded from other players' conversation
-contexts. Recent messages are kept in a bounded in-memory history. Normal soft task
-resets preserve the connection and conversation; reconnects start a new history.
-Use separate checkpoint directories for different worlds. The model receives actual
-health, food, position, time, player join/leave events and deaths so it can ground
-comments in observations; these do not provide vision of distant players or builds.
+World knowledge is stored in `<ckpt_dir>/memory/world.sqlite3` and shared by the
+conversation agent, action planner, curriculum planner and task critic. It includes
+places, resources, storage, experiences, projects, player preferences and ownership
+instructions. Executable learned skills remain separate.
+
+Set a stable `"world_id": "survival-main"` in your configuration (or use
+`--world-id survival-main`) to keep knowledge when a LAN port changes. Choose a new
+ID for a new/reset world. Namespaces also include the server hostname and bot's
+configured login identity. Without a world ID, the port supplies the fallback
+identity; the bot cannot detect a world reset automatically. Set the intended ID
+before the first run with structured memory so migration claims the right world.
+
+Each fact has a record ID, dimension, visibility, provenance, evidence, observation
+and verification times, and freshness information. Public facts are shared; private
+facts belong to a player and are retrieved only for that player's private
+conversation or associated private task. Known player UUIDs preserve private notes
+across username changes, with a scoped username fallback until a UUID is available.
+Raw private telemetry is not inserted into public prompts. New private task code
+and descriptions are also excluded from the shared learned-skill library and
+public curriculum progress lists. A later passive scan
+also cannot publish a discovery originally recorded during private work.
+
+The bot can learn without chatting: loaded block scans record resource/landmark
+sightings and lava hazards, inspections record real container contents, failures and
+deaths become experiences, and verified action receipts preserve construction
+progress and task outcomes. Scans discover up to 32 relevant blocks within 24 blocks and recheck at most 512
+tracked locations, at most once every five seconds. They do not infer that a bell proves a village or
+that a failed route can never work. Project memory currently preserves up to 1024
+verified cells and recent receipts; the persistent project execution workflow is a
+later phase.
+
+Changing knowledge is marked stale rather than assumed permanent. Resource sightings
+expire after 30 minutes, container contents after five minutes, and place sightings
+after one day. These are freshness labels, not automatic deletion. Preferences,
+ownership notes and project progress remain until changed or forgotten. Block
+changes invalidate matching sightings, and older events cannot overwrite fresher
+inspection results. A reported/inferred fact never becomes verified just because a
+model repeats it.
+
+Examples of memory-only chat requests:
+
+- “Remember here as home.” The location comes from the requesting player's loaded
+  entity; if unknown, the agent must ask for coordinates.
+- “Remember home at 100, 64, -20.” This is saved as a player report, not a direct observation. If the player is
+  not visible and supplies no dimension, the dimension remains unknown.
+- “What do you remember about the kitchen chest?”
+- “Rename that chest to kitchen supplies.” Naming an observed object creates a
+  reported alias linked to the original observation, preserving its evidence.
+- “Actually, home is at 110, 64, -20.”
+- “Forget home.” This removes the selected fact and derived summaries from active
+  retrieval. Tombstones prevent the same automatic source/import from restoring it.
+
+The model chooses structured memory operations and may ask which fact you mean.
+The application checks scope, authorship, explicit edit/forget intent, and supplied
+coordinates before applying them. Private edits stay private; a private request may
+also forget the player's own public fact without publishing the deletion request.
+Operators can edit public notes, but cannot retrieve another player's private notes.
+Memory changes are applied before sending the acknowledgement. Ambiguous names need
+clarification; this phase does not yet implement general world-reference targeting.
+
+Existing `conversation/memory.json` notes and `action/chest_memory.json` entries are
+imported once into the first active namespace. Originals are preserved as backups
+and are no longer active stores. Imported notes have unknown original timestamps and are explicitly unverified.
+The old chest cache has no reliable visibility or dimension metadata, so its
+imported records are quarantined outside active retrieval; reinspection supplies
+properly scoped current facts. Import fingerprints prevent a backup
+from being imported into another world or restoring forgotten notes. Forgetting
+removes active memory and dependent summaries; it does not erase original backup
+files, Minecraft chat history, or existing action/task logs.
+
+SQLite serializes updates from execution and conversation, keeps at most 2000 raw
+evidence episodes per world, and uses bounded keyword/location retrieval; there is
+no vector database or extra model call for memory ingestion. Recent chat remains a
+separate bounded in-memory history and clears on reconnect. Live Minecraft behavior
+and model choices still need gameplay validation.
 
 Action progress and helper errors now use internal `bot.log` diagnostics. Existing
 learned skills' non-command `bot.chat` calls are also redirected internally, preserving

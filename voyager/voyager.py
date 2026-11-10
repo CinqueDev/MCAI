@@ -9,6 +9,7 @@ from typing import Dict
 import voyager.utils as U
 from .env import VoyagerEnv
 from .conversation import ConversationWorker
+from .world_memory import WorldMemory
 from .llm import DEFAULT_MODEL, resolve_api_key
 
 from .agents import ActionAgent
@@ -63,6 +64,7 @@ class Voyager:
         mc_pause_mode: str = "auto",
         chat_enabled: bool = True,
         task_operators=None,
+        world_id: str = None,
     ):
         """
         The main class for Voyager.
@@ -147,11 +149,20 @@ class Voyager:
             request_timeout=env_request_timeout,
         )
         identity = f"{self.env.mc_host}:{self.env.mc_port}:{self.env.mc_auth}:{self.env.mc_username}"
+        if world_id is not None and (not isinstance(world_id, str) or not world_id.strip()):
+            raise ValueError("world_id must be a non-empty string or None")
+        if world_id is not None:
+            identity = f"{self.env.mc_host}:{self.env.mc_auth}:{self.env.mc_username}:world:{world_id}"
         journal_key = hashlib.sha256(identity.encode()).hexdigest()[:16]
         self.env.task_journal_path = str(Path(ckpt_dir).resolve() / "tasks" / f"{journal_key}.json")
         self.env.task_operators = task_operators or []
         self.task_controller = self.env.tasks
         self.active_task = None
+        self.world_memory = WorldMemory(Path(ckpt_dir) / "memory" / "world.sqlite3",
+            server=mc_host, account=f"{mc_auth}:{mc_username or 'bot'}",
+            world_id=world_id if world_id is not None else f"port:{mc_port or 25565}", operators=task_operators or [])
+        self.world_memory.migrate_legacy(ckpt_dir)
+        self.env.world_memory = self.world_memory
         self.env_wait_ticks = env_wait_ticks
         self.reset_placed_if_failed = reset_placed_if_failed
         self.max_iterations = max_iterations
@@ -168,8 +179,11 @@ class Voyager:
             chat_log=action_agent_show_chat_log,
             execution_error=action_agent_show_execution_error,
         )
+        self.action_agent.world_memory = self.world_memory
+        self.action_agent.memory_actor = None
+        self.action_agent.memory_dimension = None
         self.conversation = ConversationWorker(
-            self.env, ckpt_dir=ckpt_dir, task_client=self.task_controller, model_name=action_agent_model_name,
+            self.env, ckpt_dir=ckpt_dir, task_client=self.task_controller, world_memory=self.world_memory, model_name=action_agent_model_name,
             temperature=0.7, request_timeout=min(request_timeout, 30),
             api_key=api_key, base_url=deepseek_base_url,
         )
@@ -191,6 +205,7 @@ class Voyager:
             warm_up=curriculum_agent_warm_up,
             core_inventory_items=curriculum_agent_core_inventory_items,
         )
+        self.curriculum_agent.world_memory = self.world_memory
         self.critic_agent = CriticAgent(
             model_name=critic_agent_model_name,
             temperature=critic_agent_temperature,
@@ -199,6 +214,8 @@ class Voyager:
             base_url=deepseek_base_url,
             mode=critic_agent_mode,
         )
+        self.critic_agent.world_memory = self.world_memory
+        self.critic_agent.memory_actor = None
         self.skill_manager = SkillManager(
             model_name=skill_manager_model_name,
             temperature=skill_manager_temperature,
@@ -245,6 +262,8 @@ class Voyager:
         print(
             f"\033[33mRender Action Agent system message with {len(skills)} skills\033[0m"
         )
+        self.action_agent.memory_actor = self.env.task_recipient
+        self.action_agent.memory_dimension = events[-1][1]["status"].get("dimension")
         system_message = self.action_agent.render_system_message(skills=skills)
         human_message = self.action_agent.render_human_message(
             events=events, code="", task=self.task, context=context, critique=""
@@ -259,6 +278,7 @@ class Voyager:
 
     def close(self):
         self.env.close()
+        self.world_memory.close()
 
     def _control_result(self):
         controller = getattr(self, "task_controller", None)
@@ -302,6 +322,7 @@ class Voyager:
             if controlled:
                 return self.messages, 0, False, controlled
             self.action_agent.update_chest_memory(events[-1][1]["nearbyChests"])
+            self.critic_agent.memory_actor = self.env.task_recipient
             success, critique = self.critic_agent.check_task_success(
                 events=events,
                 task=self.task,
@@ -409,6 +430,11 @@ class Voyager:
             elif not info.get("controlled"):
                 if not controller.complete(record, info["success"], info.get("critique", "Yielded to player request")):
                     info.update(controlled=True, interrupted=True, success=False)
+            if getattr(self, "world_memory", None):
+                latest = controller.get(record["id"])
+                if latest:
+                    self.env.remember_observations([["observe", {"status": {"taskControl": {"tasks": [latest]},
+                        "dimension": (self.last_events or [[None, {}]])[-1][1].get("status", {}).get("dimension")}}]])
             self.env.execution = None
             self.active_task = None
         return messages, reward, done, info
@@ -443,6 +469,7 @@ class Voyager:
             self.requested_task_id = request.get("id") if request else None
             self.env.player_request = bool(request and (request.get("requester") or "id" not in request))
             self.env.task_recipient = request["recipient"] if request else None
+            self.action_agent.memory_actor = self.env.task_recipient
             if request:
                 task = request["task"]
                 requester = request.get("requester", "the player identified in the task")
@@ -495,10 +522,10 @@ class Voyager:
                     self.conversation.report_task(request, info["success"], info["critique"])
                 else:
                     self.conversation.report_task(request, info["success"])
-            if info["success"]:
+            if info["success"] and not self.env.task_recipient:
                 self.skill_manager.add_new_skill(info)
 
-            if not info.get("interrupted"):
+            if not info.get("interrupted") and not self.env.task_recipient:
                 self.curriculum_agent.update_exploration_progress(info)
             print(
                 f"\033[35mCompleted tasks: {', '.join(self.curriculum_agent.completed_tasks)}\033[0m"
@@ -544,6 +571,7 @@ class Voyager:
             self.requested_task_id = request.get("id") if request else None
             self.env.player_request = bool(request and request.get("requester"))
             self.env.task_recipient = request.get("recipient") if request else None
+            self.action_agent.memory_actor = self.env.task_recipient
             expected_task = sub_goals[self.curriculum_agent.progress]
             next_task = request["task"] if request else expected_task
             context = request.get("context", "") if request else self.curriculum_agent.get_task_context(next_task)

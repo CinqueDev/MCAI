@@ -14,6 +14,7 @@ class Status extends Observation {
                 players: this.bot.conversation.players(),
                 recentPublicMessages: this.bot.conversation.history.filter(m => m.channel === "public").slice(-20),
             } : null,
+            worldObservations: this.bot.worldObservations?.snapshot() || [],
             players: playerState(this.bot),
             dimension: this.bot.game.dimension,
             actionResults: this.bot.actionResults || [],

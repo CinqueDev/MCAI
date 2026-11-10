@@ -93,6 +93,7 @@ class Conversation {
     snapshot() {
         return {
             session: this.session, cursor: this.sequence, username: this.bot.username,
+            worldObservations: this.bot.worldObservations?.snapshot() || [],
             playerLocations: playerState(this.bot),
             inventory: (this.bot.inventory?.items() || []).map(item => ({ name: item.name, count: item.count })),
             players: this.players(), noPlayersOnline: this.players().length === 0,
