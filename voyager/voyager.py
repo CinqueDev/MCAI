@@ -1,6 +1,8 @@
 import copy
 import hashlib
 import logging
+import threading
+from concurrent.futures import Future
 from pathlib import Path
 import json
 import time
@@ -439,6 +441,47 @@ class Voyager:
             self.active_task = None
         return messages, reward, done, info
 
+    def _next_work(self):
+        """Claim chat work while one background curriculum suggestion is pending."""
+        controller = getattr(self, "task_controller", None)
+        planning_reported = False
+        while True:
+            if controller:
+                controller.wait_ready()
+            request = self.conversation.pop_task()
+            if request:
+                self._discard_curriculum = True
+                if controller:
+                    controller.set_planning(False)
+                return request, None
+            if not controller:
+                return None, self.curriculum_agent.propose_next_task(
+                    events=self.last_events, chest_observation=self.action_agent.render_chest_observation(), max_retries=5)
+            future = getattr(self, "_curriculum_future", None)
+            if future is not None and future.done() and getattr(self, "_discard_curriculum", False):
+                self._curriculum_future = future = None
+            if future is None:
+                self.action_agent.memory_actor = None
+                events = copy.deepcopy(self.last_events)
+                chests = self.action_agent.render_chest_observation()
+                future = self._curriculum_future = Future()
+                self._discard_curriculum = False
+                def propose(pending=future, observation=events, chest_observation=chests):
+                    try:
+                        pending.set_result(self.curriculum_agent.propose_next_task(
+                            events=observation, chest_observation=chest_observation, max_retries=5))
+                    except Exception as error:
+                        pending.set_exception(error)
+                threading.Thread(target=propose, name="curriculum-planning", daemon=True).start()
+            if not planning_reported:
+                controller.set_planning(True)
+                planning_reported = True
+            if future.done() and not self._discard_curriculum:
+                self._curriculum_future = None
+                controller.set_planning(False)
+                return None, future.result()
+            time.sleep(0.2)
+
     def learn(self, reset_env=True):
         if self.resume:
             # keep the inventory
@@ -465,7 +508,7 @@ class Voyager:
                 break
             if getattr(self, "task_controller", None):
                 self.task_controller.wait_ready()
-            request = self.conversation.pop_task()
+            request, proposal = self._next_work()
             self.requested_task_id = request.get("id") if request else None
             self.env.player_request = bool(request and (request.get("requester") or "id" not in request))
             self.env.task_recipient = request["recipient"] if request else None
@@ -476,11 +519,7 @@ class Voyager:
                 context = (f"Explicit request from {requester}: {task}. Resolve me/my/here relative to this requester. Respect player property and storage."
                            if self.env.player_request else request.get("context", ""))
             else:
-                task, context = self.curriculum_agent.propose_next_task(
-                    events=self.last_events,
-                    chest_observation=self.action_agent.render_chest_observation(),
-                    max_retries=5,
-                )
+                task, context = proposal
             print(
                 f"\033[35mStarting task {task} for at most {self.action_agent_task_max_retries} times\033[0m"
             )

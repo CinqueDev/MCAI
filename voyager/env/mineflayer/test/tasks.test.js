@@ -346,3 +346,14 @@ test("action completion keeps the lease until an outstanding atomic operation se
     await Promise.all([finishing, rejected]);
     assert.equal(controller.lease, null);
 });
+
+test("queue and status explain intentional pauses and normal planning", async () => {
+    const { controller } = fixture();
+    controller.planning = true;
+    assert.match(await controller.control("status", "Alice"), /Planning/);
+    const task = start(controller);
+    controller.enqueue({ task: "Next request", requester: "Alice" });
+    await controller.control("pause", "Alice");
+    assert.match(await controller.control("queue", "Alice"), /resume is needed/);
+    assert.match(await controller.control("cancel", "Alice", task.id), /remains paused/);
+});

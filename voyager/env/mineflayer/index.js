@@ -22,6 +22,10 @@ const Chests = require("./lib/observation/chests");
 const { plugin: tool } = require("mineflayer-tool");
 
 let bot = null;
+let connectionState = {
+    state: "disconnected",
+    reason: "Bot has not connected",
+};
 
 const app = express();
 
@@ -41,15 +45,32 @@ app.post("/start", (req, res) => {
         return res.status(400).json({ error: error.message });
     }
     bot = connectionBot;
+    connectionState = {
+        state: "starting",
+        reason: "Waiting for Minecraft initialization",
+    };
+    let disconnectReason = null;
     const connection = watchConnection(
         connectionBot,
         (error) => {
+            disconnectReason = error;
+            if (bot === connectionBot)
+                connectionState = { state: "disconnected", reason: error };
             if (!res.headersSent) res.status(400).json({ error });
             connectionBot.end();
         },
-        () => {
+        (reason) => {
             if (connectionBot.viewer) connectionBot.viewer.close();
-            if (bot === connectionBot) bot = null;
+            if (bot === connectionBot) {
+                bot = null;
+                connectionState = {
+                    state: "disconnected",
+                    reason:
+                        disconnectReason ||
+                        reason ||
+                        "Minecraft connection ended",
+                };
+            }
         }
     );
 
@@ -72,6 +93,8 @@ app.post("/start", (req, res) => {
             // Mineflayer installs bot.chat asynchronously during protocol setup.
             // Bind it only after the built-in plugins are ready.
             connectionBot.conversation = new Conversation(connectionBot);
+            if (req.body.serverPaused)
+                await setPaused(connectionBot, connectionBot.pauseMode, false);
             let itemTicks = 1;
             if (req.body.reset === "hard") {
                 connectionBot.chat("/clear @s");
@@ -135,7 +158,9 @@ app.post("/start", (req, res) => {
             // connectionBot.collectBlock.movements.digCost = 0;
             // connectionBot.collectBlock.movements.placeCost = 0;
 
-            connectionBot.worldObservations = new WorldObservations(connectionBot);
+            connectionBot.worldObservations = new WorldObservations(
+                connectionBot
+            );
             obs.inject(connectionBot, [
                 OnChat,
                 OnError,
@@ -152,6 +177,8 @@ app.post("/start", (req, res) => {
                 operators: req.body.taskOperators || [],
             });
             connectionBot.tasks.install();
+            for (const entry of connectionBot.conversation.history)
+                connectionBot.conversation.handleControl(entry);
 
             if (req.body.spread) {
                 connectionBot.chat(
@@ -164,15 +191,28 @@ app.post("/start", (req, res) => {
                 connectionBot.waitTicks * itemTicks
             );
             if (res.headersSent) return;
-            connection.ready();
-            res.json(connectionBot.observe());
-
             initCounter(connectionBot);
             for (const command of worldSetupCommands(connectionBot.version)) {
                 connectionBot.chat(command);
             }
+            const observation = connectionBot.observe();
+            if (bot !== connectionBot || connectionState.state !== "starting")
+                throw new Error(
+                    disconnectReason ||
+                        "Minecraft disconnected during initialization"
+                );
+            connection.ready();
+            connectionState = { state: "ready", reason: null };
+            res.json(observation);
             console.log(`Connected to Minecraft Java ${connectionBot.version}`);
         } catch (error) {
+            disconnectReason = error.message;
+            console.error("Minecraft initialization failed:", error.message);
+            if (bot === connectionBot)
+                connectionState = {
+                    state: "disconnected",
+                    reason: error.message,
+                };
             if (!res.headersSent)
                 res.status(400).json({ error: error.message });
             connectionBot.end();
@@ -447,11 +487,22 @@ app.post("/step", async (req, res) => {
 
 app.post("/tasks", async (req, res) => {
     const controller = bot?.tasks;
-    if (!controller) return res.status(409).json({ error: "Bot not ready" });
+    if (!controller || connectionState.state !== "ready")
+        return res.status(409).json({
+            code:
+                connectionState.state === "starting"
+                    ? "BOT_STARTING"
+                    : "BOT_DISCONNECTED",
+            error: connectionState.reason || "Minecraft bot is not ready",
+        });
     try {
         const body = req.body;
         let result;
         switch (body.operation || "snapshot") {
+            case "planning":
+                controller.planning = Boolean(body.value);
+                result = true;
+                break;
             case "snapshot":
                 result = controller.snapshot();
                 break;

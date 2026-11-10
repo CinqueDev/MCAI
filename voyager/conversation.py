@@ -1,6 +1,7 @@
 """A background social agent; it never evaluates code or controls the bot directly."""
 import json
 import logging
+import re
 from pathlib import Path
 from queue import Empty, Queue
 import threading
@@ -57,6 +58,11 @@ you already performed them. Respect personal chests/builds and ask before alteri
 If can_queue_task is false, explain that the queue is full and leave task null.
 If queuing a task, say it will be attempted after the current action finishes. You may also ask a
 clarifying question and leave task null. Avoid duplicate tasks already in context.
+
+Execution status is authoritative. Suspended/paused work or needs_review explains
+why queued tasks are waiting; tell the player to resume or review/cancel as appropriate.
+Planning and a brief handoff between tasks are normal, not evidence of a queue bug.
+Never invent a queue failure from an empty active task. A recovered task starts paused.
 
 Exact stop/cancel/pause/resume/status/queue controls are handled immediately by the task controller. Do not turn them into new work requests.
 
@@ -200,7 +206,48 @@ class ConversationWorker:
             self.next_initiative = now + 120
             self.cursor = snapshot["cursor"]
 
+    def _remember_current_place(self, snapshot, message):
+        if not self.world_memory:
+            return False
+        sources = [message] if message else [m for m in snapshot["history"]
+            if m["id"] > self.cursor and not m["outgoing"] and not m.get("control") and m["channel"] == "public"]
+        for source in sources:
+            text = source["text"].strip()
+            username = re.escape(snapshot.get("username") or "")
+            if username:
+                text = re.sub(r"^@?" + username + r"(?:[,!:]\s*|\s+)", "", text, flags=re.I)
+            match = re.fullmatch(r"(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:remember|save|mark|note)\s+"
+                r"(?:here|this (?:location|place|spot)|my (?:current )?(?:location|position|coordinates)|where I am)"
+                r"\s+(?:as|named|called)\s+(?:my\s+|our\s+)?([^\n!?]{1,80}?)[.!?]?", text, re.I)
+            if not match:
+                continue
+            name = match[1].strip().rstrip(".")
+            private = source["channel"] == "private"
+            actor = source["sender"]
+            locations = snapshot.get("playerLocations") or []
+            dimension = (snapshot.get("state") or {}).get("dimension")
+            if source.get("requesterLocation") is not None:
+                locations = [{"username": actor, "position": source["requesterLocation"]}]
+                dimension = source.get("requesterDimension")
+            try:
+                results = self.world_memory.apply_chat([{"op": "remember", "kind": "place", "name": name, "data": {}}],
+                    actor=actor, private=private, dimension=dimension, user_text=source["text"],
+                    message_id=f"{snapshot['session']}:{source['id']}", player_locations=locations)
+                errors = [result["error"] for result in results if not result["ok"]]
+                reply = "I couldn't save that place: " + errors[0] if errors else f"I'll remember your location as {name}."
+            except Exception:
+                log.exception("Could not save requested location")
+                reply = "I couldn't save that location right now. Please try again."
+            self.outbox = ({"session": snapshot["session"], "key": str(uuid.uuid4()),
+                "replyTo": message["id"] if message else None,
+                "recipient": actor if private else None, "text": reply}, None)
+            self.flush()
+            return True
+        return False
+
     def respond(self, snapshot, message):
+        if self._remember_current_place(snapshot, message):
+            return
         private = message is not None and message["channel"] == "private"
         sender = message["sender"] if private else None
         scope = f"private:{sender.lower()}" if private else "public"
@@ -222,6 +269,17 @@ class ConversationWorker:
         # Queued private work must also remain out of other conversations.
         context["queued_tasks"] = [t["task"] for t in context["queued_tasks"]
                                    if t["recipient"] in (None, sender)]
+        control = snapshot.get("taskControl")
+        if control and "tasks" in control:
+            active = control.get("active")
+            visible = lambda task: not task.get("recipient") or task.get("recipient", "").casefold() == (sender or "").casefold()
+            context["execution"] = {"suspended": control.get("suspended", False), "busy": control.get("busy", False),
+                "planning": control.get("planning", False),
+                "active": ({"state": active["state"], "task": active["task"] if visible(active) else "Private task",
+                            "needs_review": bool(active.get("needsReview")), "recovered": bool(active.get("recovery"))} if active else None),
+                "queued": [{"task": task["task"], "state": task["state"]} for task in control["tasks"] if task["state"] == "queued" and visible(task)]}
+            context["queued_tasks"] = [task["task"] for task in context["execution"]["queued"]]
+            context["task"] = context["execution"]["active"]["task"] if active else None
         memory_policy = ""
         if self.world_memory:
             state = snapshot.get("state") or {}
@@ -282,7 +340,7 @@ class ConversationWorker:
                 try:
                     results = self.world_memory.apply_chat(decision["memory_ops"], actor=requester, private=private,
                         dimension=(snapshot.get("state") or {}).get("dimension"), user_text=source["text"],
-                        message_id=f"{snapshot['session']}:{source['id']}", player_locations=snapshot.get("playerLocations") or [])
+                        message_id=f"{snapshot['session']}:{source['id']}", player_locations=([{"username": requester, "position": source["requesterLocation"]}] if source.get("requesterLocation") is not None else snapshot.get("playerLocations") or []))
                     errors = [r["error"] for r in results if not r["ok"]]
                     if errors:
                         reply = "I couldn't update that memory: " + errors[0]

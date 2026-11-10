@@ -101,3 +101,30 @@ test("history is bounded but unacknowledged mandatory messages survive history e
     assert.equal(chat.history.length, 100);
     assert.equal(chat.snapshot().pending[0].text, "help");
 });
+
+test("request-time player coordinates are captured from loaded entities if the tab-list link is missing", () => {
+    const { bot, chat } = setup();
+    const { Vec3 } = require("vec3");
+    bot.game = { dimension: "overworld" };
+    bot.entity = { position: new Vec3(0, 64, 0) };
+    bot.players.Alice = { uuid: "12345678-1234-5678-1234-567812345678", entity: null };
+    const entity = { type: "player", username: "Alice", position: new Vec3(4, 64, 8) };
+    bot.entities = { 7: entity };
+    bot.emit("whisper", "Alice", "remember here as home");
+    entity.position = new Vec3(100, 80, 100);
+    const message = chat.snapshot().pending[0];
+    assert.deepEqual(message.requesterLocation, { x: 4, y: 64, z: 8 });
+    assert.equal(message.requesterDimension, "overworld");
+    entity.isValid = false;
+    assert.equal(chat.snapshot().playerLocations.find(p => p.username === "Alice").position, null);
+});
+
+test("a control received before task initialization is handled after initialization", async () => {
+    const { bot, chat } = setup();
+    bot.emit("whisper", "Alice", "resume");
+    bot.tasks = { control: async () => "Resumed" };
+    chat.handleControl(chat.history[0]);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(chat.pending.size, 0);
+    assert.equal(chat.history.at(-1).text, "Resumed");
+});

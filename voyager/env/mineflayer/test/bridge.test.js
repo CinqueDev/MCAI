@@ -6,7 +6,7 @@ const vm = require("node:vm");
 const { EventEmitter } = require("node:events");
 
 // Exercise real route handlers without Minecraft, plugins, or a listening socket.
-function bridge() {
+function bridge({ initError = null } = {}) {
     const routes = {};
     const bots = [];
     const options = [];
@@ -22,7 +22,7 @@ function bridge() {
             if (name === "./lib/conversation") return require("../lib/conversation");
             if (name === "./lib/connection") return require("../lib/connection");
             if (name === "./lib/pause") return require("../lib/pause");
-            if (name === "./lib/utils") return { initCounter() {} };
+            if (name === "./lib/utils") return { initCounter() { if (initError) throw new Error(initError); } };
             if (name === "./lib/compatibility") return { worldSetupCommands: () => [] };
             if (name === "./lib/observation/base") return { inject(bot) { bot.observe = () => "observation"; } };
             if (name === "./lib/skillLoader") return { inject() {} };
@@ -193,4 +193,33 @@ test("private stop interrupts an active generated action through the real bridge
     assert.equal(task.actions[0].state, "interrupted");
     assert.equal(bot.tasks.lease, null);
     assert.ok(bot.commands.some(text => text.startsWith("/msg Alice Stopped")));
+});
+
+test("tasks distinguish initialization from a lost Minecraft connection", async () => {
+    const { routes, bots, spawn } = bridge();
+    routes["/start"]({ body: { port: 25565 } }, response());
+    const waiting = response();
+    await routes["/tasks"]({ body: { operation: "snapshot" } }, waiting);
+    assert.equal(waiting.value.code, "BOT_STARTING");
+    await spawn();
+    const ready = response();
+    await routes["/tasks"]({ body: { operation: "snapshot" } }, ready);
+    assert.equal(ready.statusCode, 200);
+    bots[0].emit("kicked", "Server closed the connection");
+    const ended = response();
+    await routes["/tasks"]({ body: {} }, ended);
+    assert.equal(ended.value.code, "BOT_DISCONNECTED");
+    assert.match(ended.value.error, /Server closed/);
+});
+
+test("a setup failure cannot publish a successful start followed by an empty controller", async () => {
+    const { routes, spawn } = bridge({ initError: "Missing startup clock" });
+    const started = response();
+    routes["/start"]({ body: { port: 25565 } }, started);
+    await spawn();
+    assert.equal(started.statusCode, 400);
+    assert.match(started.value.error, /Missing startup clock/);
+    const tasks = response();
+    await routes["/tasks"]({ body: {} }, tasks);
+    assert.equal(tasks.value.code, "BOT_DISCONNECTED");
 });

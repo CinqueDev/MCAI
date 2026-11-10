@@ -11,24 +11,34 @@ function connectionOptions(body) {
         throw new Error("A username/account identifier is required");
     }
     if (auth === "offline" && !/^[A-Za-z0-9_]{1,16}$/.test(username)) {
-        throw new Error("Offline username must contain 1-16 letters, digits, or underscores");
+        throw new Error(
+            "Offline username must contain 1-16 letters, digits, or underscores"
+        );
     }
     const host = body.host ?? "localhost";
-    if (typeof host !== "string" || !host.trim()) throw new Error("Invalid Minecraft host");
+    if (typeof host !== "string" || !host.trim())
+        throw new Error("Invalid Minecraft host");
     if (!Number.isInteger(body.port) || body.port < 1 || body.port > 65535) {
         throw new Error("Invalid Minecraft port");
     }
     const options = {
-        host, port: body.port, username, auth,
+        host,
+        port: body.port,
+        username,
+        auth,
         disableChatSigning: auth === "offline",
         checkTimeoutInterval: 60 * 60 * 1000,
     };
     if (body.version) options.version = body.version;
     if (auth === "microsoft") {
-        options.profilesFolder = path.resolve(body.profilesFolder || ".minecraft-auth");
+        options.profilesFolder = path.resolve(
+            body.profilesFolder || ".minecraft-auth"
+        );
         fs.mkdirSync(options.profilesFolder, { recursive: true, mode: 0o700 });
         options.onMsaCode = (data) => {
-            const message = data.message || `Open ${data.verification_uri} and enter ${data.user_code}`;
+            const message =
+                data.message ||
+                `Open ${data.verification_uri} and enter ${data.user_code}`;
             console.log(`Microsoft sign-in: ${message.replace(/\s+/g, " ")}`);
         };
     }
@@ -40,31 +50,46 @@ function watchConnection(bot, onFailure, onEnd) {
     let ready = false;
     let failed = false;
     let ended = false;
-    const cleanup = () => {
+    const cleanup = (reason) => {
         if (ended) return;
         ended = true;
-        onEnd();
+        onEnd(reason);
     };
     const fail = (reason) => {
         if (ready || failed) return;
         failed = true;
-        onFailure(reason instanceof Error ? reason.message :
-            typeof reason === "string" ? reason : JSON.stringify(reason));
+        onFailure(
+            reason instanceof Error
+                ? reason.message
+                : typeof reason === "string"
+                ? reason
+                : JSON.stringify(reason)
+        );
     };
     bot.on("error", (error) => {
         fail(error);
         if (ready) console.error("Minecraft connection error:", error.message);
     });
+    let kickReason;
     bot.once("kicked", (reason) => {
+        kickReason =
+            typeof reason === "string" ? reason : JSON.stringify(reason);
+        console.error("Minecraft kicked:", kickReason);
         fail(reason);
         bot.end();
-        cleanup();
+        cleanup(kickReason);
     });
     bot.once("end", (reason) => {
         fail(reason || "Disconnected before spawning");
-        cleanup();
+        const detail = kickReason || reason || "Minecraft connection ended";
+        console.error("Minecraft disconnected:", detail);
+        cleanup(detail);
     });
-    return { ready() { ready = true; } };
+    return {
+        ready() {
+            ready = true;
+        },
+    };
 }
 
 module.exports = { connectionOptions, watchConnection };

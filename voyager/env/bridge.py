@@ -1,5 +1,6 @@
 import os.path
 import logging
+import threading
 from voyager.tasks import TaskClient
 import re
 import time
@@ -95,6 +96,7 @@ class VoyagerEnv(gym.Env):
         self.task_operators = []
         self.connected = False
         self.server_paused = False
+        self.reconnect_lock = threading.Lock()
 
     def get_mineflayer_process(self, server_port):
         U.f_mkdir(self.log_path, "mineflayer")
@@ -152,6 +154,31 @@ class VoyagerEnv(gym.Env):
                     f"Minecraft connection failed ({res.status_code}): {res.text}"
                 )
             return res.json()
+
+    def reconnect(self):
+        """Rejoin an existing world without clearing inventory or restoring old coordinates."""
+        if not self.has_reset or not self.reset_options:
+            raise RuntimeError("Cannot reconnect before the first Minecraft connection")
+        with self.reconnect_lock:
+            if not self.mineflayer.is_running:
+                self.mineflayer.run()
+                if not self.mineflayer.is_running:
+                    raise RuntimeError("Could not restart the Minecraft bridge")
+            probe = requests.post(f"{self.server}/tasks", json={"operation": "snapshot"}, timeout=10)
+            if probe.status_code == 200:
+                return
+            self.connected = False
+            options = {**self.reset_options, "reset": "soft", "inventory": {}, "equipment": [],
+                       "position": None, "spread": False, "waitTicks": 0, "serverPaused": self.server_paused}
+            response = requests.post(f"{self.server}/start", json=options, timeout=self.request_timeout)
+            if response.status_code != 200:
+                self.connected = False
+                raise RuntimeError(f"Minecraft reconnection failed: {response.text}")
+            self.connected = True
+            self.server_paused = False
+            self.remember_observations(json.loads(response.json()))
+            # Restore normal per-action observation timing after the tick-free handshake.
+            requests.post(f"{self.server}/observe", json={"waitTicks": self.reset_options.get("waitTicks", 5)}, timeout=10).raise_for_status()
 
     def step(
         self,
@@ -255,7 +282,8 @@ class VoyagerEnv(gym.Env):
     def close(self):
         if self.conversation:
             self.conversation.stop()
-        self.unpause()
+        if self.connected:
+            self.unpause()
         if self.connected:
             res = requests.post(f"{self.server}/stop")
             if res.status_code == 200:

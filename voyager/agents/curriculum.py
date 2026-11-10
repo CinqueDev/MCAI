@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+import tempfile
+from pathlib import Path
 import random
 import re
 
@@ -418,12 +422,26 @@ class CurriculumAgent:
             self.qa_cache_questions_vectordb.add_texts(
                 texts=[question],
             )
-            U.dump_json(self.qa_cache, f"{self.ckpt_dir}/curriculum/qa_cache.json")
+            self._save_qa_cache()
             self.qa_cache_questions_vectordb.persist()
             questions.append(question)
             answers.append(answer)
         assert len(questions_new) == len(questions) == len(answers)
         return questions, answers
+
+    def _save_qa_cache(self):
+        # Background planning may be abandoned during shutdown. Keep the previous
+        # cache intact until a complete replacement has been written.
+        target = Path(self.ckpt_dir) / "curriculum" / "qa_cache.json"
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=target.parent, prefix=".qa-cache-", delete=False) as output:
+                temporary = output.name
+                json.dump(self.qa_cache, output, ensure_ascii=False, indent=2)
+            os.replace(temporary, target)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
 
     def get_task_context(self, task):
         # if include ore in question, gpt will try to use tool with skill touch enhancement to mine
@@ -439,7 +457,7 @@ class CurriculumAgent:
             self.qa_cache_questions_vectordb.add_texts(
                 texts=[question],
             )
-            U.dump_json(self.qa_cache, f"{self.ckpt_dir}/curriculum/qa_cache.json")
+            self._save_qa_cache()
             self.qa_cache_questions_vectordb.persist()
         context = f"Question: {question}\n{answer}"
         return context

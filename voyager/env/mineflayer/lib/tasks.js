@@ -18,6 +18,7 @@ class TaskController {
         this.context = new AsyncLocalStorage();
         this.atomicContext = new AsyncLocalStorage();
         this.lease = null;
+        this.planning = false;
         this.cleanupCount = 0;
         this.revision = 0;
         this.records = [];
@@ -87,6 +88,7 @@ class TaskController {
         return {
             revision: this.revision,
             busy: Boolean(this.lease || this.cleanupCount),
+            planning: this.planning,
             suspended: this.suspended,
             active: this.active() || null,
             tasks: this.records,
@@ -151,6 +153,7 @@ class TaskController {
                   .sort((a, b) => b.priority - a.priority)[0];
         if (!record || record.state !== "queued") return null;
         record.state = "running";
+        this.planning = false;
         record.generation++;
         record.updated = new Date().toISOString();
         this.save();
@@ -219,21 +222,45 @@ class TaskController {
                 command === "status" &&
                 channel === "public"
             )
-                return "A private task is active. Ask privately for its status.";
-            return visible.length
-                ? visible
-                      .map(
-                          (t) =>
-                              `${t.id.slice(0, 8)}: ${t.state} — ${t.task} (${
-                                  t.actions.filter(
-                                      (a) => a.state === "completed"
-                                  ).length
-                              } action batches)`
-                      )
-                      .join("; ")
-                : this.suspended
-                ? "Work is stopped. Say resume to continue."
-                : "No active tasks.";
+                return this.suspended
+                    ? "A private task is paused. Ask privately for status and recovery instructions."
+                    : "A private task is active. Ask privately for its status.";
+            const halt = this.suspended
+                ? "Work is paused; resume is needed before queued work can run. "
+                : "";
+            if (
+                !visible.length &&
+                command === "status" &&
+                this.planning &&
+                !this.suspended
+            )
+                return "Planning the next task; player requests can run while I think.";
+            if (
+                !visible.length &&
+                command === "status" &&
+                this.lease &&
+                !this.suspended
+            )
+                return "Finishing the previous action before dispatching the next task.";
+            return (
+                halt +
+                (visible.length
+                    ? visible
+                          .map(
+                              (t) =>
+                                  `${t.id.slice(0, 8)}: ${t.state} — ${
+                                      t.task
+                                  } (${
+                                      t.actions.filter(
+                                          (a) => a.state === "completed"
+                                      ).length
+                                  } action batches)`
+                          )
+                          .join("; ")
+                    : this.suspended
+                    ? "Work is stopped. Say resume to continue."
+                    : "No active tasks.")
+            );
         }
         if (
             command === "resume" &&
@@ -295,7 +322,11 @@ class TaskController {
             return `Cancelled ${record.id.slice(
                 0,
                 8
-            )}. Completed work is kept.`;
+            )}. Completed work is kept.${
+                this.suspended
+                    ? " Work remains paused; say resume to run queued work."
+                    : ""
+            }`;
         }
         if (command === "resume") {
             if (record?.needsReview)

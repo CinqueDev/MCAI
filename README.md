@@ -293,7 +293,10 @@ states and verified receipts are saved atomically under `<ckpt_dir>/tasks/`.
 Journal files use the current host, login identifier and `world_id`, or the port
 when no world ID is configured. Reuse the same checkpoint and identity for recovery.
 Setting/changing an explicit world ID selects a separate task journal. Queued work survives restart;
-previously running work returns paused. Resume replans against observations and
+previously running work returns paused, with a terminal message explaining how to
+resume. Queue/status replies distinguish paused work from normal planning. Player
+requests are dispatched while curriculum suggestions are generated in the background;
+abandoned suggestions are discarded. Resume replans against observations and
 prior receipts, rather than continuing an old JavaScript stack.
 
 Cancellation is cooperative: movement and bounded waits are interrupted; an
@@ -384,7 +387,9 @@ model repeats it.
 Examples of memory-only chat requests:
 
 - “Remember here as home.” The location comes from the requesting player's loaded
-  entity; if unknown, the agent must ask for coordinates.
+  entity, captured when the message arrives, with a loaded-entity fallback if
+  the tab-list link is missing. Common remember-here requests are handled directly
+  without a model call. If your position remains unknown, it asks for coordinates.
 - “Remember home at 100, 64, -20.” This is saved as a player report, not a direct observation. If the player is
   not visible and supplies no dimension, the dimension remains unknown.
 - “What do you remember about the kitchen chest?”
@@ -426,6 +431,12 @@ separate bridge route with enforced reply channels and command rejection.
 To disable conversation, set `"chat_enabled": false` in `config.json` or run
 `python run.py --no-chat-enabled`. Internal action logging remains enabled.
 The Python API also accepts `Voyager(..., chat_enabled=False)`.
+
+The task client tolerates brief bridge initialization gaps. If Minecraft disconnects
+while waiting for queued or paused work, it attempts one soft reconnection without
+clearing inventory or teleporting to saved coordinates. Server kick/disconnect
+reasons are logged, and startup failures are reported before a successful connection
+is published.
 
 Automated tests simulate messages and transport failures. Actual multiplayer chat,
 server-specific chat plugins, timing during gameplay, and social behavior still need

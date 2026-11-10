@@ -68,3 +68,24 @@ class MemoryOperationSchemaTests(unittest.TestCase):
                        {"id": 1, "sender": "Alice", "channel": "private", "text": "Remember here as home"})
         self.assertNotIn("couldn't", worker.request.call_args.args[0]["text"])
         self.assertIn('"op":"remember"', WORLD_MEMORY_PROMPT)
+
+    def test_remember_here_bypasses_a_model_that_would_ask_for_coordinates(self):
+        llm = Mock(return_value=AIMessage(content='{"reply":"Please provide coordinates"}'))
+        worker = ConversationWorker(Mock(), llm=llm, world_memory=self.memory, ckpt_dir=self.directory.name)
+        worker.request = Mock(return_value={"delivered": True})
+        worker.respond({"session": "direct", "history": [], "username": "ItsDeltaBot", "state": {"dimension": "overworld"},
+                        "playerLocations": [{"username": "Alice", "position": {"x": 99, "y": 64, "z": 99}}]},
+                       {"id": 1, "sender": "Alice", "channel": "private", "text": "ItsDeltaBot, remember here as home",
+                        "requesterLocation": {"x": 4, "y": 64, "z": 8}, "requesterDimension": "overworld"})
+        llm.assert_not_called()
+        self.assertEqual(self.memory.search("home", actor="Alice")[0]["data"]["position"], {"x": 4, "y": 64, "z": 8})
+        self.assertNotIn("provide", worker.request.call_args.args[0]["text"])
+
+    def test_real_missing_location_still_asks_instead_of_using_the_bots_position(self):
+        worker = ConversationWorker(Mock(), llm=Mock(), world_memory=self.memory, ckpt_dir=self.directory.name)
+        worker.request = Mock(return_value={"delivered": True})
+        worker.respond({"session": "unknown", "history": [], "state": {"position": {"x": 123, "y": 64, "z": 123}}},
+                       {"id": 1, "sender": "Alice", "channel": "private", "text": "remember here as home",
+                        "requesterLocation": None, "requesterDimension": None})
+        self.assertEqual(self.memory.search("home", actor="Alice"), [])
+        self.assertIn("unknown", worker.request.call_args.args[0]["text"])
