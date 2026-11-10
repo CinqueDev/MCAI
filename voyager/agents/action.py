@@ -1,3 +1,4 @@
+import json
 import re
 import time
 
@@ -148,9 +149,15 @@ class ActionAgent:
         if self.chat_log:
             if chat_messages:
                 chat_log = "\n".join(chat_messages)
-                observation += f"Chat log: {chat_log}\n\n"
+                observation += f"Action diagnostics: {chat_log}\n\n"
             else:
-                observation += f"Chat log: None\n\n"
+                observation += f"Action diagnostics: None\n\n"
+
+        social = events[-1][1]["status"].get("conversation")
+        if social:
+            players = social["players"]
+            observation += "Other players online: " + (", ".join(players) if players else "NONE — you are alone") + "\n\n"
+            observation += "Recent public conversation (handled separately; do not send replies from action code): " + json.dumps(social["recentPublicMessages"]) + "\n\n"
 
         observation += f"Biome: {biome}\n\n"
 

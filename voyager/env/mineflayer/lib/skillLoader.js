@@ -9,7 +9,7 @@ function inject(bot) {
     bot._fish = bot.fish;
     bot.fish = async () => {
         if (bot.heldItem?.name !== "fishing_rod") {
-            bot.chat("I'm not holding a fishing rod!");
+            bot.log("I'm not holding a fishing rod!");
             return;
         }
         let timeout = null;
@@ -41,7 +41,7 @@ function inject(bot) {
     bot._useOn = bot.useOn;
     bot.useOn = async (entity) => {
         if (entity.position.distanceTo(bot.entity.position) > 6) {
-            bot.chat("Please goto a place near the entity first!");
+            bot.log("Please goto a place near the entity first!");
             return;
         }
         await bot._useOn(entity);
@@ -51,18 +51,11 @@ function inject(bot) {
     bot._activateBlock = bot.activateBlock;
     bot.activateBlock = async (block) => {
         if (block.position.distanceTo(bot.entity.position) > 6) {
-            bot.chat("Please goto a place near the block first!");
+            bot.log("Please goto a place near the block first!");
             return;
         }
         // action_count.activateBlock++;
         await bot._activateBlock(block);
-    };
-
-    bot._chat = bot.chat;
-    bot.chat = (message) => {
-        // action_count.chat++;
-        bot.emit("chatEvent", "bot", message);
-        bot._chat(message);
     };
 
     bot.inventoryUsed = () => {

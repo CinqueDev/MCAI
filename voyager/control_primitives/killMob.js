@@ -26,7 +26,7 @@ async function killMob(bot, mobName, timeout = 300) {
             entity.position.distanceTo(bot.entity.position) < 48
     );
     if (!entity) {
-        bot.chat(`No ${mobName} nearby, please explore first`);
+        bot.log(`No ${mobName} nearby, please explore first`);
         _killMobFailCount++;
         if (_killMobFailCount > 10) {
             throw new Error(

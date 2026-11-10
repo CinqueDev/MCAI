@@ -1,4 +1,5 @@
 const fs = require("fs");
+const { Conversation } = require("./lib/conversation");
 const { setPaused } = require("./lib/pause");
 const { connectionOptions, watchConnection } = require("./lib/connection");
 const express = require("express");
@@ -38,6 +39,7 @@ app.post("/start", (req, res) => {
         return res.status(400).json({ error: error.message });
     }
     bot = connectionBot;
+    connectionBot.conversation = new Conversation(connectionBot);
     const connection = watchConnection(connectionBot, (error) => {
         if (!res.headersSent) res.status(400).json({ error });
         connectionBot.end();
@@ -237,6 +239,7 @@ app.post("/step", async (req, res) => {
     let _smeltItemFailCount = 0;
 
     // Retrieve array form post bod
+    bot.conversation.task = req.body.task || null;
     const code = req.body.code;
     const programs = req.body.programs;
     bot.cumulativeObs = [];
@@ -400,6 +403,23 @@ app.post("/step", async (req, res) => {
             return source + err.message + "\n" + code_source;
         }
         return err.message;
+    }
+});
+
+app.post("/observe", (req, res) => {
+    if (!bot?.entity || !bot.observe) return res.status(409).json({ error: "Bot not spawned" });
+    bot.waitTicks = req.body.waitTicks ?? bot.waitTicks;
+    res.json(bot.observe());
+});
+
+// Independent of /step: chat remains available while generated actions await work.
+app.post("/chat", (req, res) => {
+    if (!bot?.conversation) return res.status(409).json({ error: "Bot not connected" });
+    try {
+        if (req.body.text !== undefined) return res.json(bot.conversation.send(req.body));
+        res.json(bot.conversation.snapshot());
+    } catch (error) {
+        res.status(400).json({ error: error.message });
     }
 });
 

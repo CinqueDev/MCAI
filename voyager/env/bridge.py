@@ -81,6 +81,9 @@ class VoyagerEnv(gym.Env):
             self.mc_instance = None
         self.has_reset = False
         self.reset_options = None
+        self.conversation = None
+        self.current_task = None
+        self.task_recipient = None
         self.connected = False
         self.server_paused = False
 
@@ -153,6 +156,7 @@ class VoyagerEnv(gym.Env):
         data = {
             "code": code,
             "programs": programs,
+            "task": {"description": self.current_task, "recipient": self.task_recipient},
         }
         res = requests.post(
             f"{self.server}/step", json=data, timeout=self.request_timeout
@@ -178,6 +182,18 @@ class VoyagerEnv(gym.Env):
         if options.get("inventory", {}) and options.get("mode", "hard") != "hard":
             raise RuntimeError("inventory can only be set when options is hard")
 
+        # Task boundaries need fresh observations, not a reconnect that loses chat.
+        if (options.get("mode") == "soft" and self.has_reset and self.connected
+                and self.mineflayer.is_running
+                and not any(options.get(key) for key in ("inventory", "equipment", "position", "spread"))):
+            response = requests.post(
+                f"{self.server}/observe", json={"waitTicks": options.get("wait_ticks", 5)},
+                timeout=self.request_timeout,
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"Failed to observe Minecraft server: {response.text}")
+            return json.loads(response.json())
+
         self.reset_options = {
             "host": self.mc_host,
             "port": self.mc_port,
@@ -194,6 +210,7 @@ class VoyagerEnv(gym.Env):
             "position": options.get("position", None),
         }
 
+        self.connected = False
         self.unpause()
         self.mineflayer.stop()
         time.sleep(1)  # wait for mineflayer to exit
@@ -201,12 +218,16 @@ class VoyagerEnv(gym.Env):
         returned_data = self.check_process()
         self.has_reset = True
         self.connected = True
+        if self.conversation:
+            self.conversation.start()
         # All the reset in step will be soft
         self.reset_options["reset"] = "soft"
         self.pause()
         return json.loads(returned_data)
 
     def close(self):
+        if self.conversation:
+            self.conversation.stop()
         self.unpause()
         if self.connected:
             res = requests.post(f"{self.server}/stop")

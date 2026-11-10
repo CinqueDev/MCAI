@@ -2,7 +2,7 @@
 
 This fork of [MineDojo/Voyager](https://github.com/MineDojo/Voyager) uses
 DeepSeek for Minecraft action generation, curriculum planning, question answering,
-task verification, and skill descriptions. All five chat clients default to
+task verification, and skill descriptions. The agent clients default to
 `deepseek-flash`, the current Flash API alias documented by
 [DeepSeek](https://api-docs.deepseek.com/).
 
@@ -224,6 +224,60 @@ confirmation fails. It freezes world simulation for everyone; players and their
 mounts still move. See the [official 1.20.3 tick command documentation](https://www.minecraft.net/en-us/article/minecraft-java-edition-1-20-3).
 If the process is forcibly killed while frozen, an operator may need to run
 `/tick unfreeze` manually.
+
+## Playing and chatting with the agent
+
+Conversation is enabled by default and runs separately from action generation, so
+players can chat while the bot is mining, crafting, or waiting for a task decision.
+Run normally with `python run.py`; no tag or chat command prefix is required.
+
+- Ordinary public messages are optional: the agent may join in or remain silent.
+- Any public message containing the bot's in-game username, anywhere and ignoring
+  capitalization, requires a public reply. With Microsoft login this is the profile
+  name, rather than the account email used to authenticate.
+- Private messages sent through `/msg` or `/tell` require a private reply using
+  `/msg <sender> ...`. Private routing takes priority over username mentions.
+- Recent conversation includes senders, timestamps, channels, and the bot's replies.
+  The agent can follow up without another mention, use the player's language,
+  offer help, and occasionally initiate conversation. It receives online-player
+  presence explicitly and never initiates public conversation while alone.
+- Optional replies have a 20-second cooldown; opportunities to initiate are considered
+  about every two minutes. Requests for quiet suppress optional conversation for up
+  to an hour. Mandatory private replies and public mentions bypass those limits.
+- Explicit requests for Minecraft work can be queued during `learn()`. They are
+  attempted after the current task, with a completion/failure message in the original
+  public/private channel. Asking a question or discussing a plan need not queue work.
+  Active mining/combat is not interrupted mid-action.
+
+The conversation worker uses the configured action model and DeepSeek credentials,
+with its own client and a 30-second maximum request timeout. It polls locally every
+two seconds; polling does not call the model. Model calls occur for incoming chat or
+periodic opportunities to initiate while players are online, and consume API credits.
+If generation fails for a mandatory message, it sends a brief failure acknowledgement.
+Delivery retries use an idempotency key to avoid repeating a reply.
+
+Useful social notes are stored under `<ckpt_dir>/conversation/memory.json`. Public
+notes and each player's private notes have separate scopes; private messages, private
+notes, and private task descriptions are excluded from other players' conversation
+contexts. Recent messages are kept in a bounded in-memory history. Normal soft task
+resets preserve the connection and conversation; reconnects start a new history.
+Use separate checkpoint directories for different worlds. The model receives actual
+health, food, position, time, player join/leave events and deaths so it can ground
+comments in observations; these do not provide vision of distant players or builds.
+
+Action progress and helper errors now use internal `bot.log` diagnostics. Existing
+learned skills' non-command `bot.chat` calls are also redirected internally, preserving
+the action agent's feedback without sending it to players. Conversation sends use a
+separate bridge route with enforced reply channels and command rejection.
+
+To disable conversation, set `"chat_enabled": false` in `config.json` or run
+`python run.py --no-chat-enabled`. Internal action logging remains enabled.
+The Python API also accepts `Voyager(..., chat_enabled=False)`.
+
+Automated tests simulate messages and transport failures. Actual multiplayer chat,
+server-specific chat plugins, timing during gameplay, and social behavior still need
+an in-game check; the default input adapters support vanilla translated messages and
+Mineflayer's public/whisper events.
 
 ## Saved skills and checkpoints
 

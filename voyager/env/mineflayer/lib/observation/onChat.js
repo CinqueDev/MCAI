@@ -11,7 +11,7 @@ class onChat extends Observation {
                 return;
             }
 
-            this.obs += message;
+            this.obs += message + "\n";
             this.bot.event(this.name);
         });
     }

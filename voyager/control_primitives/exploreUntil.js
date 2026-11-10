@@ -15,7 +15,7 @@ async function exploreUntil(
     }
     const test = callback();
     if (test) {
-        bot.chat("Explore success.");
+        bot.log("Explore success.");
         return Promise.resolve(test);
     }
     if (direction.x === 0 && direction.y === 0 && direction.z === 0) {
@@ -67,7 +67,7 @@ async function exploreUntil(
                 const result = callback();
                 if (result) {
                     cleanUp();
-                    bot.chat("Explore success.");
+                    bot.log("Explore success.");
                     resolve(result);
                 }
             } catch (err) {
@@ -80,7 +80,7 @@ async function exploreUntil(
 
         maxTimeTimeout = setTimeout(() => {
             cleanUp();
-            bot.chat("Max exploration time reached");
+            bot.log("Max exploration time reached");
             resolve(null);
         }, maxTime * 1000);
     });

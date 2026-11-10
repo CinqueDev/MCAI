@@ -16,7 +16,7 @@ async function craftItem(bot, name, count = 1) {
         maxDistance: 32,
     });
     if (!craftingTable) {
-        bot.chat("Craft without a crafting table");
+        bot.log("Craft without a crafting table");
     } else {
         await bot.pathfinder.goto(
             new GoalLookAtBlock(craftingTable.position, bot.world)
@@ -24,12 +24,12 @@ async function craftItem(bot, name, count = 1) {
     }
     const recipe = bot.recipesFor(itemByName.id, null, 1, craftingTable)[0];
     if (recipe) {
-        bot.chat(`I can make ${name}`);
+        bot.log(`I can make ${name}`);
         try {
             await bot.craft(recipe, count, craftingTable);
-            bot.chat(`I did the recipe for ${name} ${count} times`);
+            bot.log(`I did the recipe for ${name} ${count} times`);
         } catch (err) {
-            bot.chat(`I cannot do the recipe for ${name} ${count} times`);
+            bot.log(`I cannot do the recipe for ${name} ${count} times`);
         }
     } else {
         failedCraftFeedback(bot, name, itemByName, craftingTable);

@@ -21,10 +21,11 @@ class LaunchConfigTests(unittest.TestCase):
             path = self.write_config(directory, mc_version="26.1", mc_pause_mode="none",
                                      resume=True, ckpt_dir="saved")
             settings, env_path = run.parse_settings([
-                "--config", str(path), "--mc-port", "49532", "--no-resume"])
+                "--config", str(path), "--mc-port", "49532", "--no-resume", "--no-chat-enabled"])
             self.assertEqual(settings["mc_port"], 49532)
             self.assertEqual(settings["mc_version"], "26.1")
             self.assertFalse(settings["resume"])
+            self.assertFalse(settings["chat_enabled"])
             self.assertEqual(settings["ckpt_dir"], str(Path(directory).resolve() / "saved"))
             self.assertEqual(env_path, Path(directory).resolve() / ".env")
 
@@ -46,7 +47,7 @@ class LaunchConfigTests(unittest.TestCase):
 
     def test_invalid_settings_fail_before_launch(self):
         for values in [{"mc_port": True}, {"mc_port": 70000}, {"resume": "false"},
-                       {"mc_version": 26.1}, {"mc_auth": "bad"},
+                       {"chat_enabled": "false"}, {"mc_version": 26.1}, {"mc_auth": "bad"},
                        {"mc_auth": "microsoft"}, {"mc_pause_mode": "bad"},
                        {"deepseek_api_key": "do-not-print-this"}]:
             with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:

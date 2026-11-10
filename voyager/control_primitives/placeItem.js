@@ -13,7 +13,7 @@ async function placeItem(bot, name, position) {
     }
     const item = bot.inventory.findInventoryItem(itemByName.id);
     if (!item) {
-        bot.chat(`No ${name} in inventory`);
+        bot.log(`No ${name} in inventory`);
         return;
     }
     const item_count = item.count;
@@ -33,12 +33,12 @@ async function placeItem(bot, name, position) {
         if (block?.name !== "air") {
             referenceBlock = block;
             faceVector = vector;
-            bot.chat(`Placing ${name} on ${block.name} at ${block.position}`);
+            bot.log(`Placing ${name} on ${block.name} at ${block.position}`);
             break;
         }
     }
     if (!referenceBlock) {
-        bot.chat(
+        bot.log(
             `No block to place ${name} on. You cannot place a floating block.`
         );
         _placeItemFailCount++;
@@ -57,12 +57,12 @@ async function placeItem(bot, name, position) {
         // You must equip the item right before calling placeBlock
         await bot.equip(item, "hand");
         await bot.placeBlock(referenceBlock, faceVector);
-        bot.chat(`Placed ${name}`);
+        bot.log(`Placed ${name}`);
         bot.save(`${name}_placed`);
     } catch (err) {
         const item = bot.inventory.findInventoryItem(itemByName.id);
         if (item?.count === item_count) {
-            bot.chat(
+            bot.log(
                 `Error placing ${name}: ${err.message}, please find another position to place`
             );
             _placeItemFailCount++;
@@ -72,7 +72,7 @@ async function placeItem(bot, name, position) {
                 );
             }
         } else {
-            bot.chat(`Placed ${name}`);
+            bot.log(`Placed ${name}`);
             bot.save(`${name}_placed`);
         }
     }

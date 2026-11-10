@@ -7,5 +7,6 @@
   "mc_pause_mode": "none",
   "mc_profiles_folder": ".minecraft-auth",
   "ckpt_dir": "ckpt",
-  "resume": false
+  "resume": false,
+  "chat_enabled": true
 }

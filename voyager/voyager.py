@@ -5,6 +5,7 @@ from typing import Dict
 
 import voyager.utils as U
 from .env import VoyagerEnv
+from .conversation import ConversationWorker
 from .llm import DEFAULT_MODEL, resolve_api_key
 
 from .agents import ActionAgent
@@ -57,6 +58,7 @@ class Voyager:
         mc_version: str = None,
         mc_profiles_folder: str = ".minecraft-auth",
         mc_pause_mode: str = "auto",
+        chat_enabled: bool = True,
     ):
         """
         The main class for Voyager.
@@ -71,6 +73,7 @@ class Voyager:
         :param mc_version: protocol version, or None for automatic detection
         :param mc_profiles_folder: local Microsoft token cache directory
         :param mc_pause_mode: auto, none, mod (/pause), or tick (/tick freeze and unfreeze)
+        :param chat_enabled: enable background player conversation and queued requests
         :param azure_login: legacy local Minecraft launcher config
         :param server_port: mineflayer port
         :param openai_api_key: deprecated alias for deepseek_api_key (must be a DeepSeek key)
@@ -155,6 +158,14 @@ class Voyager:
             chat_log=action_agent_show_chat_log,
             execution_error=action_agent_show_execution_error,
         )
+        self.conversation = ConversationWorker(
+            self.env, ckpt_dir=ckpt_dir, model_name=action_agent_model_name,
+            temperature=0.7, request_timeout=min(request_timeout, 30),
+            api_key=api_key, base_url=deepseek_base_url,
+        )
+        # A stalled social request must not hold up every following private reply.
+        self.conversation.llm.client.max_retries = 0
+        self.env.conversation = self.conversation if chat_enabled else None
         self.action_agent_task_max_retries = action_agent_task_max_retries
         self.curriculum_agent = CurriculumAgent(
             model_name=curriculum_agent_model_name,
@@ -202,6 +213,7 @@ class Voyager:
     def reset(self, task, context="", reset_env=True):
         self.action_agent_rollout_num_iter = 0
         self.task = task
+        self.env.current_task = task
         self.context = context
         if reset_env:
             self.env.reset(
@@ -354,11 +366,17 @@ class Voyager:
             if self.recorder.iteration > self.max_iterations:
                 print("Iteration limit reached")
                 break
-            task, context = self.curriculum_agent.propose_next_task(
-                events=self.last_events,
-                chest_observation=self.action_agent.render_chest_observation(),
-                max_retries=5,
-            )
+            request = self.conversation.pop_task()
+            self.env.task_recipient = request["recipient"] if request else None
+            if request:
+                task = request["task"]
+                context = f"Explicit player request: {task}. Respect player property and storage."
+            else:
+                task, context = self.curriculum_agent.propose_next_task(
+                    events=self.last_events,
+                    chest_observation=self.action_agent.render_chest_observation(),
+                    max_retries=5,
+                )
             print(
                 f"\033[35mStarting task {task} for at most {self.action_agent_task_max_retries} times\033[0m"
             )
@@ -388,6 +406,8 @@ class Voyager:
                 print("Your last round rollout terminated due to error:")
                 print(f"\033[41m{e}\033[0m")
 
+            if request:
+                self.conversation.report_task(request, info["success"])
             if info["success"]:
                 self.skill_manager.add_new_skill(info)
 

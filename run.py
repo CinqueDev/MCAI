@@ -20,6 +20,7 @@ DEFAULTS = {
     "mc_pause_mode": "auto",
     "ckpt_dir": "ckpt",
     "resume": False,
+    "chat_enabled": True,
 }
 
 
@@ -37,6 +38,7 @@ def parse_settings(argv=None):
     parser.add_argument("--mc-pause-mode", choices=("auto", "none", "mod", "tick"),
                         default=argparse.SUPPRESS)
     parser.add_argument("--ckpt-dir", default=argparse.SUPPRESS)
+    parser.add_argument("--chat-enabled", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
     parser.add_argument("--resume", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
     overrides = vars(parser.parse_args(argv))
     supplied_config = overrides.pop("config")
@@ -57,6 +59,8 @@ def parse_settings(argv=None):
     settings = {**DEFAULTS, **config, **overrides}
     if type(settings["mc_port"]) is not int or not 1 <= settings["mc_port"] <= 65535:
         parser.error("Set mc_port to an integer from 1 to 65535 in config.json or use --mc-port")
+    if type(settings["chat_enabled"]) is not bool:
+        parser.error("chat_enabled must be a JSON boolean (true or false)")
     if type(settings["resume"]) is not bool:
         parser.error("resume must be a JSON boolean (true or false)")
     for key in ("mc_host", "mc_profiles_folder", "ckpt_dir", "mc_auth", "mc_pause_mode"):

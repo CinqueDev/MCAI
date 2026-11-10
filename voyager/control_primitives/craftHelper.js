@@ -56,6 +56,6 @@ function failedCraftFeedback(bot, name, item, craftingTable) {
                 }
             }
         }
-        bot.chat(`I cannot make ${name} because I need: ${message}`);
+        bot.log(`I cannot make ${name} because I need: ${message}`);
     }
 }

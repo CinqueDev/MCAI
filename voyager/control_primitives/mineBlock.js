@@ -16,7 +16,7 @@ async function mineBlock(bot, name, count = 1) {
         count: 1024,
     });
     if (blocks.length === 0) {
-        bot.chat(`No ${name} nearby, please explore first`);
+        bot.log(`No ${name} nearby, please explore first`);
         _mineBlockFailCount++;
         if (_mineBlockFailCount > 10) {
             throw new Error(

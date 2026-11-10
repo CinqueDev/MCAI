@@ -30,12 +30,12 @@ async function smeltItem(bot, itemName, fuelName, count = 1) {
     let success_count = 0;
     for (let i = 0; i < count; i++) {
         if (!bot.inventory.findInventoryItem(item.id, null)) {
-            bot.chat(`No ${itemName} to smelt in inventory`);
+            bot.log(`No ${itemName} to smelt in inventory`);
             break;
         }
         if (furnace.fuelSeconds < 15 && furnace.fuelItem()?.name !== fuelName) {
             if (!bot.inventory.findInventoryItem(fuel.id, null)) {
-                bot.chat(`No ${fuelName} as fuel in inventory`);
+                bot.log(`No ${fuelName} as fuel in inventory`);
                 break;
             }
             await furnace.putFuel(fuel.id, null, 1);
@@ -53,9 +53,9 @@ async function smeltItem(bot, itemName, fuelName, count = 1) {
         success_count++;
     }
     furnace.close();
-    if (success_count > 0) bot.chat(`Smelted ${success_count} ${itemName}.`);
+    if (success_count > 0) bot.log(`Smelted ${success_count} ${itemName}.`);
     else {
-        bot.chat(
+        bot.log(
             `Failed to smelt ${itemName}, please check the fuel and input.`
         );
         _smeltItemFailCount++;

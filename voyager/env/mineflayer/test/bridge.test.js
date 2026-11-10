@@ -16,6 +16,7 @@ function bridge() {
         require(name) {
             if (name === "express") return () => app;
             if (name === "body-parser") return { json() {}, urlencoded() {} };
+            if (name === "./lib/conversation") return require("../lib/conversation");
             if (name === "./lib/connection") return require("../lib/connection");
             if (name === "./lib/pause") return require("../lib/pause");
             if (name === "mineflayer") return { createBot(settings) {
@@ -69,4 +70,36 @@ test("late end from previous bot does not erase a new connection", async () => {
     assert.equal(bots[1].commands.length, 1);
     await routes["/pause"]({ body: { mode: "tick", paused: false } }, response());
     assert.deepEqual(bots[1].commands, ["/tick freeze", "/tick unfreeze"]);
+});
+
+test("chat routes operate independently and enforce the incoming private channel", () => {
+    const { routes, bots } = bridge();
+    routes["/start"]({ body: { port: 25565 } }, response());
+    const bot = bots[0];
+    bot.username = "Voyager";
+    bot.players = { Alice: {}, Voyager: {} };
+    bot.emit("whisper", "Alice", "Voyager hello");
+    const inbox = response();
+    routes["/chat"]({ body: {} }, inbox);
+    const { session, pending } = inbox.value;
+    const out = response();
+    routes["/chat"]({ body: { session, replyTo: pending[0].id, key: "1", recipient: "Bob", text: "Hello" } }, out);
+    assert.equal(out.value.delivered, true);
+    assert.deepEqual(bot.commands, ["/msg Alice Hello"]);
+    routes["/chat"]({ body: { session, replyTo: pending[0].id, key: "1", text: "Hello" } }, response());
+    assert.equal(bot.commands.length, 1);
+});
+
+test("fresh observations preserve the bot and are unavailable before spawn", () => {
+    const { routes, bots } = bridge();
+    const missing = response();
+    routes["/observe"]({ body: {} }, missing);
+    assert.equal(missing.statusCode, 409);
+    routes["/start"]({ body: { port: 25565 } }, response());
+    bots[0].entity = {};
+    bots[0].observe = () => "fresh observation";
+    const out = response();
+    routes["/observe"]({ body: { waitTicks: 10 } }, out);
+    assert.equal(out.value, "fresh observation");
+    assert.equal(bots[0].waitTicks, 10);
 });

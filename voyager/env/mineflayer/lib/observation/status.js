@@ -8,6 +8,11 @@ class Status extends Observation {
 
     observe() {
         return {
+            conversation: this.bot.conversation ? {
+                username: this.bot.username,
+                players: this.bot.conversation.players(),
+                recentPublicMessages: this.bot.conversation.history.filter(m => m.channel === "public").slice(-20),
+            } : null,
             health: this.bot.health,
             food: this.bot.food,
             saturation: this.bot.foodSaturation,
