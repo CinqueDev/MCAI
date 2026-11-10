@@ -84,6 +84,7 @@ class VoyagerEnv(gym.Env):
         self.conversation = None
         self.current_task = None
         self.task_recipient = None
+        self.player_request = False
         self.connected = False
         self.server_paused = False
 
@@ -156,6 +157,7 @@ class VoyagerEnv(gym.Env):
         data = {
             "code": code,
             "programs": programs,
+            "playerRequest": self.player_request,
             "task": {"description": self.current_task, "recipient": self.task_recipient},
         }
         res = requests.post(

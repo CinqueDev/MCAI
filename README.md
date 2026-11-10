@@ -262,9 +262,39 @@ Run normally with `python run.py`; no tag or chat command prefix is required.
   about every two minutes. Requests for quiet suppress optional conversation for up
   to an hour. Mandatory private replies and public mentions bypass those limits.
 - Explicit requests for Minecraft work can be queued during `learn()`. They are
-  attempted after the current task, with a completion/failure message in the original
+  attempted after the current action, with a completion/failure message in the original
   public/private channel. Asking a question or discussing a plan need not queue work.
   Active mining/combat is not interrupted mid-action.
+
+Chat requests now have explicit action helpers:
+
+| Request | Helper | Behavior |
+| --- | --- | --- |
+| “Come here” | `moveToPlayer(bot, username)` | Walk to a currently visible player and face them. |
+| “Meet me at 100, 64, -20” | `moveToPosition(bot, position)` | Walk to coordinates in the current dimension. |
+| “I'll give you a pickaxe” | `waitForItem(bot, names, count, timeoutMs)` | Stop and wait briefly for an inventory increase after approaching. |
+| “Drop 8 cobblestone” | `dropItem(bot, name, count)` | Drop exactly that amount from inventory, including across stacks. |
+| “Give Alice a pickaxe” | `giveItemToPlayer(bot, username, name, count)` | Approach, face the player, and drop the item nearby. |
+| “Place a crafting table here” | `placeItem(bot, name, position)` | Place at an exact integer coordinate, then verify the world block. |
+| “Build a wall here” | `buildStructure(bot, blocks)` | Execute an explicit supported blueprint, up to 128 blocks per batch. |
+
+The social agent and action planner receive current visible player coordinates,
+dimension, and inventory. Players outside loaded chunks have unknown locations;
+the bot must ask for coordinates instead of inventing them. Vague build requests
+need a location, size and materials. These helpers do not implement portal travel.
+Walking to players does not dig through buildings or place temporary scaffolding;
+paths have bounded timeouts and failures are reported. Giving verifies the drop,
+not that the intended player picked it up. Building requires real inventory items,
+solid supports and empty target cells; it can resume by skipping matching blocks.
+Block orientation/state-specific blueprints are not supported by this helper yet.
+
+Each helper records structured action evidence for the planner and task critic, so
+successful interactions can be checked against the requested coordinates, player,
+item and quantity. The legacy automatic cleanup that deleted nearby workstations
+and granted replacement supplies after each step has been removed. Placed crafting
+tables/furnaces remain in the world. Chat tasks also skip time/difficulty setup and
+teleport recovery. The original hard reset and other curriculum setup commands
+still require operator permissions as documented above.
 
 The conversation worker uses the configured action model and DeepSeek credentials,
 with its own client and a 30-second maximum request timeout. It polls locally every

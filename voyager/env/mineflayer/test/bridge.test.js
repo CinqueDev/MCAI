@@ -12,8 +12,9 @@ function bridge() {
     const options = [];
     const app = { use() {}, post(route, handler) { routes[route] = handler; }, listen() {} };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../index.js"), "utf8"), {
-        console, process: { argv: [] },
+        console, process: Object.assign(new EventEmitter(), { argv: [] }),
         require(name) {
+            if (["minecraft-data", "mineflayer-pathfinder", "vec3"].includes(name)) return require(name);
             if (name === "express") return () => app;
             if (name === "body-parser") return { json() {}, urlencoded() {} };
             if (name === "./lib/conversation") return require("../lib/conversation");
@@ -143,4 +144,27 @@ test("conversation waits for chat initialization and is not rebound on respawn",
     assert.equal(bot.conversation, session);
     bot.chat("/time set day");
     assert.deepEqual(bot.commands, ["/time set day"]);
+});
+
+
+test("player action steps preserve workstations and do not grant replacement inventory", async () => {
+    const { routes, bots } = bridge();
+    routes["/start"]({ body: { port: 25565 } }, response());
+    bots[0].finishLogin();
+    await new Promise(resolve => setImmediate(resolve));
+    const bot = bots[0];
+    bot.registry = require("minecraft-data")("1.21.11");
+    bot.entity = { position: new (require("vec3").Vec3)(0, 64, 0) };
+    bot.findBlock = () => ({ name: "crafting_table", position: bot.entity.position });
+    bot.actionResults = [{ type: "old" }];
+    let movements;
+    bot.pathfinder = { setMovements(value) { movements = value; }, isMoving: () => false };
+    bot.commands.length = 0;
+    const result = response();
+    await routes["/step"]({ body: { code: "bot.log('finished player action');", programs: "", playerRequest: true } }, result);
+    assert.equal(result.statusCode, 200);
+    assert.deepEqual(bot.commands, []);
+    assert.equal(bot.actionResults.length, 0);
+    assert.equal(movements.canDig, false);
+    assert.equal(movements.scafoldingBlocks.length, 0);
 });

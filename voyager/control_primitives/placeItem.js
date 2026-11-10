@@ -1,79 +1,54 @@
 async function placeItem(bot, name, position) {
-    // return if name is not string
-    if (typeof name !== "string") {
-        throw new Error(`name for placeItem must be a string`);
+    if (typeof name !== "string" || !mcData.itemsByName[name] || !mcData.blocksByName[name]) {
+        throw new Error(`Unknown placeable block: ${name}`);
     }
-    // return if position is not Vec3
-    if (!(position instanceof Vec3)) {
-        throw new Error(`position for placeItem must be a Vec3`);
+    if (!position || ![position.x, position.y, position.z].every(Number.isInteger)) {
+        throw new Error("Block position must contain integer x, y, z coordinates");
     }
-    const itemByName = mcData.itemsByName[name];
-    if (!itemByName) {
-        throw new Error(`No item named ${name}`);
+    position = new Vec3(position.x, position.y, position.z);
+    // Load the destination before inspecting it. Never overwrite another block.
+    await moveToPosition(bot, position, 3);
+    const existing = bot.blockAt(position);
+    if (!existing) throw new Error("Destination chunk is not loaded");
+    if (existing.name === name) {
+        const result = { type: "place", block: name, position, alreadyPresent: true, verified: true };
+        (bot.actionResults ||= []).push(result);
+        return result;
     }
-    const item = bot.inventory.findInventoryItem(itemByName.id);
-    if (!item) {
-        bot.log(`No ${name} in inventory`);
-        return;
+    if (!["air", "cave_air", "void_air"].includes(existing.name)) {
+        throw new Error(`Cannot place ${name}: ${existing.name} already occupies ${position}`);
     }
-    const item_count = item.count;
-    // find a reference block
-    const faceVectors = [
-        new Vec3(0, 1, 0),
-        new Vec3(0, -1, 0),
-        new Vec3(1, 0, 0),
-        new Vec3(-1, 0, 0),
-        new Vec3(0, 0, 1),
-        new Vec3(0, 0, -1),
-    ];
-    let referenceBlock = null;
-    let faceVector = null;
-    for (const vector of faceVectors) {
+    const item = bot.inventory.items().find(item => item.name === name);
+    if (!item) throw new Error(`No ${name} in inventory`);
+    const vectors = [new Vec3(0, 1, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+        new Vec3(0, 0, 1), new Vec3(0, 0, -1), new Vec3(0, -1, 0)];
+    let reference, face;
+    for (const vector of vectors) {
         const block = bot.blockAt(position.minus(vector));
-        if (block?.name !== "air") {
-            referenceBlock = block;
-            faceVector = vector;
-            bot.log(`Placing ${name} on ${block.name} at ${block.position}`);
+        if (block && block.boundingBox === "block") {
+            reference = block;
+            face = vector;
             break;
         }
     }
-    if (!referenceBlock) {
-        bot.log(
-            `No block to place ${name} on. You cannot place a floating block.`
-        );
-        _placeItemFailCount++;
-        if (_placeItemFailCount > 10) {
-            throw new Error(
-                `placeItem failed too many times. You cannot place a floating block.`
-            );
-        }
-        return;
+    if (!reference) throw new Error(`No solid support for ${name} at ${position}; build supports first`);
+    await navigateToGoal(bot, new GoalPlaceBlock(position, bot.world, { faces: [face.scaled(-1)] }));
+    // Recheck after moving: another player could have occupied this cell.
+    if (!["air", "cave_air", "void_air"].includes(bot.blockAt(position)?.name)) {
+        throw new Error("Placement destination changed while approaching");
     }
-
-    // You must use try catch to placeBlock
+    await bot.equip(item, "hand");
+    // Sneaking avoids opening a supporting chest/workstation instead of placing.
+    const sneaking = bot.getControlState("sneak");
     try {
-        // You must first go to the block position you want to place
-        await bot.pathfinder.goto(new GoalPlaceBlock(position, bot.world, {}));
-        // You must equip the item right before calling placeBlock
-        await bot.equip(item, "hand");
-        await bot.placeBlock(referenceBlock, faceVector);
-        bot.log(`Placed ${name}`);
-        bot.save(`${name}_placed`);
-    } catch (err) {
-        const item = bot.inventory.findInventoryItem(itemByName.id);
-        if (item?.count === item_count) {
-            bot.log(
-                `Error placing ${name}: ${err.message}, please find another position to place`
-            );
-            _placeItemFailCount++;
-            if (_placeItemFailCount > 10) {
-                throw new Error(
-                    `placeItem failed too many times, please find another position to place.`
-                );
-            }
-        } else {
-            bot.log(`Placed ${name}`);
-            bot.save(`${name}_placed`);
-        }
+        bot.setControlState("sneak", true);
+        await bot.placeBlock(reference, face);
+    } finally {
+        bot.setControlState("sneak", sneaking);
     }
+    if (bot.blockAt(position)?.name !== name) throw new Error(`Placement of ${name} at ${position} was not confirmed`);
+    const result = { type: "place", block: name, position, alreadyPresent: false, verified: true };
+    (bot.actionResults ||= []).push(result);
+    bot.save(`${name}_placed`);
+    return result;
 }

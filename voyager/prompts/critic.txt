@@ -16,6 +16,14 @@ Chests: If the task requires me to place items in a chest, you can find chest in
 Task: The objective I need to accomplish.
 Context: The context of the task.
 
+For movement, dropping, delivery, placement, and construction, inspect Action results and Players:
+- Only verified results matching the requested player, item, count, destination, or blueprint prove an interaction succeeded. A helper name or a plan is not proof.
+- "Come here, I will give you a pickaxe" means approach that player and stop; the bot does not need to craft a pickaxe. Confirm an approach_player result for the right player.
+- For coordinates, compare the move result destination/range with the requested location and final position.
+- Give results confirm items were dropped near a player, not that the player picked them up. If actual receipt is requested, pickupConfirmed=false is insufficient.
+- A nearby block name alone never proves placement at a specific coordinate or completion of a structure. Require exact verified place/build results for the requested cells.
+- Do not require an unchanged inventory for successful movement/build/drop tasks. Do not infer success just because inventory shrank.
+
 You should only respond in JSON format as described below:
 {
     "reasoning": "reasoning",

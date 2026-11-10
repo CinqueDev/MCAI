@@ -39,14 +39,26 @@ For an explicit, actionable request addressed to you in new_messages or required
 you may return a task describing
 the requested Minecraft work. Do not treat general discussion, quotations, or your own
 offers as accepted requests. Include the requesting player's actual username in a task; resolve "me" and "my" explicitly.
-Tasks are queued at safe task boundaries; never claim
+Available actions include walking to a visible player by username, walking to explicit
+x/y/z coordinates in the current dimension, dropping an exact quantity, approaching a
+player to give an item, placing a block at an exact cell, and building a ground-up
+blueprint with available materials. You receive playerLocations (null means unknown)
+and the bot's inventory. "Come here, I will give you a pickaxe" requests approaching
+that speaker and stopping nearby to wait briefly for the offered pickaxe; do not turn
+it into a request to craft a pickaxe. Include waiting for offered supplies in the task.
+For a player who is not visible, ask for x/y/z and dimension unless coordinates were
+already provided. Never invent their coordinates or claim cross-dimension travel is
+supported. Keep supplied coordinates, counts, block/item names, and requester username
+in the task text. For an underspecified build, ask for location, size and materials.
+Tasks are queued at safe action boundaries; never claim
 you already performed them. Respect personal chests/builds and ask before altering them.
 If can_queue_task is false, explain that the queue is full and leave task null.
-If queuing a task, say it will be attempted after the current task. You may also ask a
+If queuing a task, say it will be attempted after the current action finishes. You may also ask a
 clarifying question and leave task null. Avoid duplicate tasks already in context.
 
 Return ONLY JSON with keys: reply (string or null), memory (list of strings),
-quiet_seconds (number, usually 0), task (string or null). No code or commands.
+quiet_seconds (number, usually 0), task (string or null), requester (actual username
+whose new message requests the task, or null). No code or commands.
 """
 
 
@@ -144,7 +156,7 @@ class ConversationWorker:
                    (private and ((m.get("recipient") or "").lower() == sender.lower() or
                                  m["sender"].lower() == sender.lower()))]
         # Keep private exchanges out of public prompts even when pending concurrently.
-        context = {k: snapshot.get(k) for k in ("username", "players", "noPlayersOnline", "state", "task", "events")}
+        context = {k: snapshot.get(k) for k in ("username", "players", "noPlayersOnline", "state", "task", "events", "playerLocations", "inventory")}
         context.update(history=history[-40:],
                        new_messages=[m for m in history if m["id"] > self.cursor and not m["outgoing"]],
                        required_message=message,
@@ -183,7 +195,16 @@ class ConversationWorker:
             decision["task"] = None
         if not reply or not reply.strip():
             decision["task"] = None
-        metadata = (scope, decision, sender)
+        if message:
+            requester = message["sender"]
+        else:
+            authors = {m["sender"] for m in context["new_messages"]}
+            requester = decision.get("requester")
+            if not isinstance(requester, str) or requester not in authors:
+                requester = next(iter(authors)) if len(authors) == 1 else None
+            if not requester:
+                decision["task"] = None
+        metadata = (scope, decision, sender, requester)
         if reply and reply.strip():
             self.outbox = ({"session": snapshot["session"], "key": str(uuid.uuid4()),
                             "replyTo": message["id"] if message else None,
@@ -205,7 +226,7 @@ class ConversationWorker:
             self.next_optional = time.monotonic() + 20
             self.next_initiative = time.monotonic() + 120
 
-    def apply_decision(self, scope, decision, recipient):
+    def apply_decision(self, scope, decision, recipient, requester=None):
         notes = decision.get("memory")
         if isinstance(notes, list) and all(isinstance(n, str) for n in notes):
             self.memory[scope] = [n[:300] for n in notes[:20]]
@@ -225,10 +246,15 @@ class ConversationWorker:
         task = decision.get("task")
         if isinstance(task, str) and task.strip() and not self.tasks.full():
             entry = {"task": task[:1000], "recipient": recipient}
+            if requester:
+                entry["requester"] = requester
             with self.tasks.mutex:
                 duplicate = entry in self.tasks.queue
             if not duplicate:
                 self.tasks.put_nowait(entry)
+
+    def has_tasks(self):
+        return not self.tasks.empty()
 
     def pop_task(self):
         try:
@@ -236,6 +262,7 @@ class ConversationWorker:
         except Empty:
             return None
 
-    def report_task(self, request, success):
+    def report_task(self, request, success, reason=""):
         self.results.put({"recipient": request["recipient"],
-                          "text": ("Finished: " if success else "I couldn't finish: ") + request["task"]})
+                          "text": ("Finished: " if success else "I couldn't finish: ") + request["task"]
+                          + ((" — " + reason[:300]) if reason and not success else "")})

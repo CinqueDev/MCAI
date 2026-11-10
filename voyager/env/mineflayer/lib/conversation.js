@@ -1,3 +1,4 @@
+const { playerState } = require("./playerState");
 const { randomUUID } = require("node:crypto");
 
 // One conversation lifetime per Minecraft connection. Diagnostics never go on wire.
@@ -78,11 +79,13 @@ class Conversation {
     snapshot() {
         return {
             session: this.session, cursor: this.sequence, username: this.bot.username,
+            playerLocations: playerState(this.bot),
+            inventory: (this.bot.inventory?.items() || []).map(item => ({ name: item.name, count: item.count })),
             players: this.players(), noPlayersOnline: this.players().length === 0,
             events: this.events, history: this.history, pending: [...this.pending.values()],
             task: this.task, lastSpoke: this.lastSpoke,
             state: { health: this.bot.health, food: this.bot.food,
-                position: this.bot.entity?.position, time: this.bot.time?.timeOfDay },
+                dimension: this.bot.game?.dimension, position: this.bot.entity?.position, time: this.bot.time?.timeOfDay },
         };
     }
 

@@ -25,14 +25,18 @@ Critique: ...
 
 You should then respond to me with
 Explain (if applicable): Are there any steps missing in your plan? Why does the code not complete the task? What does the action diagnostics and execution error imply?
-Plan: How to complete the task step by step. You should pay attention to Inventory since it tells what you have. The task completeness check is also based on your final inventory.
+Plan: How to complete the task step by step. You should pay attention to Inventory since it tells what you have. For movement, drops, placement and construction, use the structured action results and exact coordinates as completion evidence. On a retry, inspect prior results and avoid repeating completed item drops or deliveries. Building/placement can safely skip matching blocks. Never treat a missing inventory item alone as proof of delivery.
 Code:
     1) Write an async function taking the bot as the only argument.
-    2) Reuse the above useful programs as much as possible.
+    2) Reuse the above useful programs as much as possible. Call the supplied helpers; do not redefine them with empty or unverified implementations.
         - Use `mineBlock(bot, name, count)` to collect blocks. Do not use `bot.dig` directly.
         - Use `craftItem(bot, name, count)` to craft items. Do not use `bot.craft` or `bot.recipesFor` directly.
         - Use `smeltItem(bot, name count)` to smelt items. Do not use `bot.openFurnace` directly.
         - Use `placeItem(bot, name, position)` to place blocks. Do not use `bot.placeBlock` directly.
+        - Use `moveToPlayer(bot, username)` for "come here"; use `moveToPosition(bot, new Vec3(x,y,z))` for supplied coordinates. A username in the player list does not imply its location is known. If not visible and no coordinates were supplied, return with bot.log explaining that coordinates are needed. Never guess or teleport.
+        - Use `waitForItem(bot, nameOrArray, count, timeoutMs)` to pause for supplies after approaching a player. For an unspecified pickaxe material, accept the array of item names ending in `_pickaxe`. Never wait indefinitely. Do not leave immediately when a player has offered an item.
+        - Use `dropItem(bot, name, count)` to drop an exact quantity, or `giveItemToPlayer(bot, username, name, count)` to approach and drop it by a player. Drops do not prove the player picked them up.
+        - Use `buildStructure(bot, blocks)` for explicit blueprints, ordered ground-up with supports first. Gather materials first. For vague build requests, use the requested size/material/location from Context; do not assume permission to clear player builds.
         - Use `killMob(bot, name, timeout)` to kill mobs. Do not use `bot.attack` directly.
     3) Your function will be reused for building more complex functions. Therefore, you should make it generic and reusable. You should not make strong assumption about the inventory (as it may be changed at a later time), and therefore you should always check whether you have the required items before using them. If not, you should first collect the required items and reuse the above useful programs.
     4) Functions in the "Code from the last round" section will not be saved or executed. Do not reuse functions listed there.

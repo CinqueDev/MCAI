@@ -137,7 +137,7 @@ class ConversationTests(unittest.TestCase):
         stored = json.loads((Path(self.directory.name) / "conversation/memory.json").read_text())
         self.assertEqual(stored, {"private:alice": ["Alice likes mining"]})
         task = self.worker.pop_task()
-        self.assertEqual(task, dict(task="Bring Alice torches", recipient="Alice"))
+        self.assertEqual(task, dict(task="Bring Alice torches", recipient="Alice", requester="Alice"))
         self.worker.report_task(task, True)
         self.run_tick(snapshot())
         result = self.worker.request.call_args.args[0]
@@ -150,6 +150,16 @@ class ConversationTests(unittest.TestCase):
         data["pending"] = [message()]
         self.run_tick(data)
         self.assertEqual(self.worker.request.call_count, 1)
+
+    def test_social_agent_sees_locations_and_inventory_to_ground_player_requests(self):
+        data = snapshot()
+        data["pending"] = [message(text="Voyager come here, I will give you a pickaxe")]
+        data["playerLocations"] = [{"username": "Alice", "position": {"x": 10, "y": 64, "z": 20}},
+                                   {"username": "Bob", "position": None}]
+        data["inventory"] = [{"name": "cobblestone", "count": 32}]
+        self.run_tick(data)
+        self.assertEqual(self.context()["playerLocations"], data["playerLocations"])
+        self.assertEqual(self.context()["inventory"], data["inventory"])
 
     def test_private_messages_have_priority_over_public_mentions(self):
         data = snapshot()

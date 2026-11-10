@@ -1,3 +1,5 @@
+import json
+
 from voyager.prompts import load_prompt
 from voyager.utils.json_utils import fix_and_parse_json
 from voyager.llm import DEFAULT_MODEL, DeepSeekChat
@@ -46,6 +48,11 @@ class CriticAgent:
                 return None
 
         observation = ""
+
+        status = events[-1][1]["status"]
+        observation += "Dimension: " + str(status.get("dimension", "unknown")) + "\n\n"
+        observation += "Players: " + json.dumps(status.get("players", [])) + "\n\n"
+        observation += "Action results: " + json.dumps(status.get("actionResults", [])) + "\n\n"
 
         observation += f"Biome: {biome}\n\n"
 

@@ -226,10 +226,11 @@ class Voyager:
             "easy" if len(self.curriculum_agent.completed_tasks) > 15 else "peaceful"
         )
         # step to peek an observation
-        events = self.env.step(
+        setup = "" if self.env.player_request else (
             "bot.chat(`/time set ${getNextTime()}`);\n"
             + f"bot.chat('/difficulty {difficulty}');"
         )
+        events = self.env.step(setup)
         skills = self.skill_manager.retrieve_skills(query=self.context)
         print(
             f"\033[33mRender Action Agent system message with {len(skills)} skills\033[0m"
@@ -259,6 +260,7 @@ class Voyager:
         )
         parsed_result = self.action_agent.process_ai_message(message=ai_message)
         success = False
+        critique = ""
         if isinstance(parsed_result, dict):
             code = parsed_result["program_code"] + "\n" + parsed_result["exec_code"]
             events = self.env.step(
@@ -275,7 +277,10 @@ class Voyager:
                 max_retries=5,
             )
 
-            if self.reset_placed_if_failed and not success:
+            if not critique:
+                critique = "; ".join(str(event["onError"]) for kind, event in events if kind == "onError")
+
+            if self.reset_placed_if_failed and not success and not self.env.player_request:
                 # revert all the placing event in the last step
                 blocks = []
                 positions = []
@@ -320,6 +325,7 @@ class Voyager:
         info = {
             "task": self.task,
             "success": success,
+            "critique": critique,
             "conversations": self.conversations,
         }
         if success:
@@ -339,6 +345,9 @@ class Voyager:
         while True:
             messages, reward, done, info = self.step()
             if done:
+                break
+            if not self.env.player_request and self.conversation.has_tasks():
+                info["interrupted"] = True
                 break
         return messages, reward, done, info
 
@@ -367,10 +376,12 @@ class Voyager:
                 print("Iteration limit reached")
                 break
             request = self.conversation.pop_task()
+            self.env.player_request = request is not None
             self.env.task_recipient = request["recipient"] if request else None
             if request:
                 task = request["task"]
-                context = f"Explicit player request: {task}. Respect player property and storage."
+                requester = request.get("requester", "the player identified in the task")
+                context = f"Explicit request from {requester}: {task}. Resolve me/my/here relative to this requester. Respect player property and storage."
             else:
                 task, context = self.curriculum_agent.propose_next_task(
                     events=self.last_events,
@@ -407,11 +418,15 @@ class Voyager:
                 print(f"\033[41m{e}\033[0m")
 
             if request:
-                self.conversation.report_task(request, info["success"])
+                if info.get("critique"):
+                    self.conversation.report_task(request, info["success"], info["critique"])
+                else:
+                    self.conversation.report_task(request, info["success"])
             if info["success"]:
                 self.skill_manager.add_new_skill(info)
 
-            self.curriculum_agent.update_exploration_progress(info)
+            if not info.get("interrupted"):
+                self.curriculum_agent.update_exploration_progress(info)
             print(
                 f"\033[35mCompleted tasks: {', '.join(self.curriculum_agent.completed_tasks)}\033[0m"
             )

@@ -1,3 +1,4 @@
+const { playerState } = require("../playerState");
 const Observation = require("./base.js").Observation;
 
 class Status extends Observation {
@@ -13,6 +14,9 @@ class Status extends Observation {
                 players: this.bot.conversation.players(),
                 recentPublicMessages: this.bot.conversation.history.filter(m => m.channel === "public").slice(-20),
             } : null,
+            players: playerState(this.bot),
+            dimension: this.bot.game.dimension,
+            actionResults: this.bot.actionResults || [],
             health: this.bot.health,
             food: this.bot.food,
             saturation: this.bot.foodSaturation,

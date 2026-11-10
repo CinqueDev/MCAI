@@ -87,6 +87,7 @@ class ActionAgent:
             "placeItem",
             "smeltItem",
             "killMob",
+            "playerActions",
         ]
         if not self.llm.model_name == "gpt-3.5-turbo":
             base_skills += [
@@ -158,6 +159,11 @@ class ActionAgent:
             players = social["players"]
             observation += "Other players online: " + (", ".join(players) if players else "NONE — you are alone") + "\n\n"
             observation += "Recent public conversation (handled separately; do not send replies from action code): " + json.dumps(social["recentPublicMessages"]) + "\n\n"
+
+        status = events[-1][1]["status"]
+        observation += "Dimension: " + str(status.get("dimension", "unknown")) + "\n\n"
+        observation += "Players (coordinates only for visible entities): " + json.dumps(status.get("players", [])) + "\n\n"
+        observation += "Verified action results / attempted interactions: " + json.dumps(status.get("actionResults", [])) + "\n\n"
 
         observation += f"Biome: {biome}\n\n"
 

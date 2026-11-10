@@ -214,6 +214,11 @@ app.post("/step", async (req, res) => {
 
     // Set up pathfinder
     const movements = new Movements(bot);
+    if (req.body.playerRequest) {
+        movements.canDig = false;
+        movements.allow1by1towers = false;
+        movements.scafoldingBlocks = [];
+    }
     bot.pathfinder.setMovements(movements);
 
     bot.globalTickCounter = 0;
@@ -245,13 +250,13 @@ app.post("/step", async (req, res) => {
     const code = req.body.code;
     const programs = req.body.programs;
     bot.cumulativeObs = [];
+    bot.actionResults = [];
     await bot.waitForTicks(bot.waitTicks);
     const r = await evaluateCode(code, programs);
     process.off("uncaughtException", otherError);
     if (r !== "success") {
         bot.emit("error", handleError(r));
     }
-    await returnItems();
     // wait for last message
     await bot.waitForTicks(bot.waitTicks);
     if (!response_sent) {
@@ -271,6 +276,7 @@ app.post("/step", async (req, res) => {
     }
 
     function onStuck(posThreshold) {
+        if (req.body.playerRequest) return; // No teleport recovery while visiting players.
         const currentPos = bot.entity.position;
         bot.stuckPosList.push(currentPos);
 
@@ -305,44 +311,6 @@ app.post("/step", async (req, res) => {
         } else {
             bot.chat("/tp @s ~ ~1.25 ~");
         }
-    }
-
-    function returnItems() {
-        bot.chat("/gamerule doTileDrops false");
-        const crafting_table = bot.findBlock({
-            matching: mcData.blocksByName.crafting_table.id,
-            maxDistance: 128,
-        });
-        if (crafting_table) {
-            bot.chat(
-                `/setblock ${crafting_table.position.x} ${crafting_table.position.y} ${crafting_table.position.z} air destroy`
-            );
-            bot.chat("/give @s crafting_table");
-        }
-        const furnace = bot.findBlock({
-            matching: mcData.blocksByName.furnace.id,
-            maxDistance: 128,
-        });
-        if (furnace) {
-            bot.chat(
-                `/setblock ${furnace.position.x} ${furnace.position.y} ${furnace.position.z} air destroy`
-            );
-            bot.chat("/give @s furnace");
-        }
-        if (bot.inventoryUsed() >= 32) {
-            // if chest is not in bot's inventory
-            if (!bot.inventory.items().find((item) => item.name === "chest")) {
-                bot.chat("/give @s chest");
-            }
-        }
-        // if iron_pickaxe not in bot's inventory and bot.iron_pickaxe
-        if (
-            bot.iron_pickaxe &&
-            !bot.inventory.items().find((item) => item.name === "iron_pickaxe")
-        ) {
-            bot.chat("/give @s iron_pickaxe");
-        }
-        bot.chat("/gamerule doTileDrops true");
     }
 
     function handleError(err) {
