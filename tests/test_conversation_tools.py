@@ -131,6 +131,25 @@ class ConversationToolTests(unittest.TestCase):
         self.assertFalse(json.loads(receipt['content'])['ok'])
         self.tasks.enqueue.assert_not_called()
 
+    def test_explicit_resume_following_option_is_forwarded_with_foreground_work(self):
+        self.tasks.enqueue.return_value = {"id":"abcdefgh1234","task":"Bring Alice supplies"}
+        llm = NativeLLM([answer(calls=[('queue_task', {"task":"Bring Alice supplies","resume_following":True})]), answer('{"reply":"Queued"}')])
+        worker = self.worker(llm)
+        worker.respond(self.snapshot, self.source('bring supplies, then follow me again'))
+        self.assertTrue(self.tasks.enqueue.call_args.args[0]['resumeMovement'])
+
+    def test_work_clarification_reaches_the_controller_instead_of_leaving_following_running(self):
+        question = 'What size and materials should I use?'
+        self.tasks.call.return_value = {'ok':True,'message':'Stopped your previous follow/stay request. ' + question}
+        llm = NativeLLM([answer(calls=[('set_movement', {'mode':'prepare_work','question':question})]), answer('{"reply":"I am already building"}')])
+        worker = self.worker(llm)
+        worker.respond(self.snapshot, self.source('build a house where I am'))
+        self.assertEqual(self.tasks.call.call_args.args, ('movement',))
+        self.assertEqual(self.tasks.call.call_args.kwargs['mode'],'prepare_work')
+        self.assertEqual(self.tasks.call.call_args.kwargs['requester'],'Alice')
+        self.assertIn(question, worker.request.call_args.args[0]['text'])
+        self.tasks.enqueue.assert_not_called()
+
     def test_current_location_tool_needs_no_predefined_wording_and_reads_back_real_coordinates(self):
         llm = NativeLLM([answer(calls=[('remember_location', {"name": "meeting point"})]), answer('{"reply":"saved"}')])
         worker = self.worker(llm)

@@ -1,3 +1,4 @@
+import hashlib
 import time
 
 from .file_utils import *
@@ -25,11 +26,14 @@ class EventRecorder:
             self.resume()
 
     def record(self, events, task):
-        task = re.sub(r'[\\/:"*?<>| ]', "_", task)
-        task = task.replace(" ", "_") + time.strftime(
-            "_%Y%m%d_%H%M%S", time.localtime()
-        )
+        # Task descriptions are user/model text, not filesystem-safe filenames.
+        # Keep the timestamp suffix compatible with resume(), while bounding the
+        # basename and preventing collisions between tasks recorded in one second.
+        description = str(task)
+        slug = re.sub(r"[^A-Za-z0-9_-]", "_", description)[:96].strip("_") or "task"
+        digest = hashlib.sha256(description.encode("utf-8")).hexdigest()[:12]
         self.iteration += 1
+        task = f"{slug}_{digest}_{self.iteration:06d}" + time.strftime("_%Y%m%d_%H%M%S", time.localtime())
         if events and not self.init_position:
             self.init_position = [
                 events[0][1]["status"]["position"]["x"],

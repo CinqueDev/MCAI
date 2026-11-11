@@ -283,3 +283,38 @@ test('observation-only startup does not take a movement lease and server pause c
     assert.equal(paused.value.paused, false);
     assert.deepEqual(bot.commands, []);
 });
+
+test('disconnect replies promptly during an unsettled atomic action and recovery does not replay it', async t => {
+    const os = require('node:os');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcai-disconnect-'));
+    t.after(() => fs.rmSync(directory, {recursive:true,force:true}));
+    const journalPath = path.join(directory,'tasks.json');
+    const { routes, bots, spawn } = bridge();
+    routes['/start']({body:{port:25565,taskJournalPath:journalPath}},response());
+    await spawn();
+    const bot = bots[0];
+    bot.registry = require('minecraft-data')('1.21.11');
+    bot.pathfinder = {setMovements(){},setGoal(){},isMoving:()=>false};
+    bot.clearControlStates = () => {};
+    let settleAtomic;
+    const atomic = new Promise(resolve => {settleAtomic=resolve;});
+    bot.atomicTransfer = () => bot.tasks.operation('transfer',()=>atomic,true);
+    const task = bot.tasks.enqueue({task:'Deliver supplies',requester:'Alice'});
+    bot.tasks.claim(task.id);
+    const res = response();
+    const step = routes['/step']({body:{execution:{id:task.id,generation:task.generation},programs:'',code:'await bot.atomicTransfer();',playerRequest:true}},res);
+    await new Promise(setImmediate);
+    assert.equal(res.headersSent,false);
+    bot.end();
+    assert.equal(res.statusCode,409);
+    assert.equal(res.value.code,'BOT_DISCONNECTED');
+    assert.equal(bot.listenerCount('physicsTick'),0);
+    routes['/start']({body:{port:25565,taskJournalPath:journalPath}},response());
+    await spawn(1);
+    const recovered = bots[1].tasks.get(task.id);
+    assert.equal(recovered.state,'paused');
+    assert.equal(recovered.needsReview,true);
+    settleAtomic();
+    await step;
+    assert.equal(bots[1].tasks.get(task.id).state,'paused');
+});

@@ -15,7 +15,10 @@ class TaskClient:
     def call(self, operation="snapshot", **values):
         deadline = time.monotonic() + 10
         while True:
-            response = requests.post(f"{self.env.server}/tasks", json={"operation": operation, **values}, timeout=10)
+            try:
+                response = requests.post(f"{self.env.server}/tasks", json={"operation": operation, **values}, timeout=10)
+            except requests.ConnectionError as error:
+                raise MinecraftConnectionLost("Minecraft bridge connection was lost") from error
             if response.status_code == 409:
                 payload = response.json()
                 reason = payload.get("error", "Minecraft task controller is unavailable")
@@ -92,6 +95,7 @@ class TaskClient:
                 self.env.reconnect()
                 recovered = True
                 continue
+            recovered = False  # A healthy snapshot permits recovery from a later, separate disconnect.
             if not state["suspended"] and not state.get("busy"):
                 return
             active = state.get("active") or {}
@@ -115,6 +119,7 @@ class TaskClient:
                 self.env.reconnect()
                 recovered = True
                 continue
+            recovered = False
             if not record or record["state"] != "paused":
                 return record
             time.sleep(0.2)

@@ -30,7 +30,7 @@ class MovementModes {
     request(request) {
         const key = request.key;
         const signature = JSON.stringify({ mode: request.mode, reference: request.reference, distance: request.distance,
-            requester: request.requester, recipient: request.recipient });
+            requester: request.requester, recipient: request.recipient, question: request.question });
         if (key && this.controller.controlReceipts[key]) {
             const old = this.controller.controlReceipts[key];
             if (old.signature !== signature) throw new Error('Movement key reused for another request');
@@ -45,7 +45,7 @@ class MovementModes {
         }
         return result;
     }
-    _request({ mode, reference, distance = 2, requester, recipient = null, memories = [], requesterLocation = null, requesterDimension = null, key = null }) {
+    _request({ mode, reference, distance = 2, requester, recipient = null, memories = [], requesterLocation = null, requesterDimension = null, key = null, question = null }) {
         const controller = this.controller;
         if (!/^[A-Za-z0-9_]{1,16}$/.test(requester || '') || (recipient !== null && recipient !== requester)) throw new Error('Invalid movement requester/channel');
         if (key) {
@@ -53,6 +53,18 @@ class MovementModes {
             if (existing) return { ok: true, id: existing.id, message: `Movement request already recorded as ${existing.id.slice(0, 8)} (${existing.state}).` };
         }
         const owned = controller.records.filter(t => t.movement && t.requester?.toLowerCase() === requester.toLowerCase());
+        if (mode === 'prepare_work') {
+            if (typeof question !== 'string' || !question.trim() || question.length > 2000) throw new Error('Provide the clarification question before preparing new work');
+            const matches = owned.filter(t => ['running', 'queued', 'paused'].includes(t.state));
+            for (const task of matches) {
+                task.state = 'cancelled'; task.generation++; task.reason = 'Superseded while preparing a new work request';
+            }
+            if (matches.length) {
+                controller.revision++; controller.save();
+                if (matches.some(t => t.id === this.running?.record.id)) controller.interrupt().catch(() => {});
+            }
+            return { ok: true, message: (matches.length ? 'Stopped your previous follow/stay request. ' : '') + question.trim() };
+        }
         if (mode === 'stop_following') {
             const matches = owned.filter(t => t.movement.mode === 'follow' && ['running', 'queued', 'paused'].includes(t.state));
             if (!matches.length) return { ok: false, message: 'You have no active or queued following request.' };
@@ -97,15 +109,36 @@ class MovementModes {
         return result;
     }
     yieldForForeground(task) {
-        const active = this.controller.active();
-        if (!active?.movement || !task.requester || task.priority <= active.priority || task.id === active.id) return;
-        active.state = 'queued'; active.generation++;
-        this.controller.revision++;
-        this.controller.save();
-        this.controller.interrupt().catch(() => {});
+        const controller = this.controller;
+        if (!task.requester || task.movement || task.priority <= 50) return;
+        const active = controller.active();
+        let interrupted = false, changed = false;
+        // Supersede this requester's queued modes as well as the running one.
+        // Otherwise a mode queued during curriculum work can return after a build.
+        for (const mode of controller.records.filter(t => t.movement && t.id !== task.id &&
+            ['queued', 'running', 'paused'].includes(t.state) && t.priority < task.priority)) {
+            const owned = mode.requester?.toLowerCase() === task.requester.toLowerCase();
+            if (owned && !task.resumeMovement) {
+                mode.state = 'cancelled'; mode.reason = `Superseded by task ${task.id}`;
+                mode.generation++; changed = true;
+                if (active?.id === mode.id) interrupted = true;
+            } else if (active?.id === mode.id) {
+                mode.state = 'queued'; mode.generation++; changed = true; interrupted = true;
+            }
+        }
+        if (!changed) return;
+        controller.revision++;
+        controller.save();
+        if (interrupted) controller.interrupt().catch(error => console.error('Movement handoff cleanup failed:', error.message));
     }
     dispatch() {
         const controller = this.controller;
+        if (this.ready && !controller.disconnected && !controller.suspended) {
+            const foreground = controller.records.filter(t => t.state === 'queued' && t.requester && !t.movement &&
+                t.priority > 50 && (!t.dependsOnTask || controller.get(t.dependsOnTask)?.state === 'completed'))
+                .sort((a, b) => b.priority - a.priority)[0];
+            if (foreground) this.yieldForForeground(foreground);
+        }
         if (!this.ready || this.running || controller.disconnected || controller.suspended || controller.lease || controller.cleanupCount) return;
         let record = controller.active();
         if (!record) {

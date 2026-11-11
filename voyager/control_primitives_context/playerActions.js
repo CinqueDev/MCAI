@@ -32,7 +32,8 @@ function resolveTarget(bot, reference) {}
 async function moveToTarget(bot, reference, range = 1, timeoutMs = 30000) {}
 // Start a PERSISTENT mode associated with this explicit player task. It takes over
 // after this action returns: do not perform further gameplay operations afterward.
-// Foreground requests temporarily yield this mode; it resumes when they finish.
+// New foreground requests from its owner supersede this mode unless resume_following
+// was explicitly requested; other players' work temporarily yields it.
 // Use the controller's stop/pause/cancel controls; never create your own infinite loop.
 async function followPlayer(bot, username, distance = 2) {}
 // Hold the bot's current position, or resolve the supplied reference and hold there.

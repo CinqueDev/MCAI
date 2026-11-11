@@ -79,7 +79,10 @@ Implemented Phase 3 details:
   observed eye/head data, a 6-block raycast and loaded-chunk checks; adjacent or
   behind positions require supported, non-hazardous space.
 - Follow/stay modes are durable tasks with exclusive movement leases. Foreground
-  requests temporarily yield them; autonomous curriculum waits. Lost players stop
+  requests supersede the same requester's old modes by default (including queued
+  modes); explicit resume-after requests and other players' work temporarily yield
+  them. A prepare-work tool mode handles movement handoff while asking for missing
+  build details, without queuing speculative construction. Autonomous curriculum waits. Lost players stop
   movement immediately and get a bounded 15-second reappearance window. Blocked
   routes time out after 30 seconds without progress; low health/lava pauses safely.
 - Safe tasks and modes requeue on reconnect with new generations and preserved

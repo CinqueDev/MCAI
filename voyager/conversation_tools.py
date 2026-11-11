@@ -91,8 +91,11 @@ class ConversationTools:
         if name == "queue_task":
             if not worker.task_client:
                 raise ValueError("Task queue is unavailable; no task was added")
-            task = worker.task_client.enqueue({"task": arguments["task"], "requester": actor,
-                "recipient": actor if private else None, "expectedRevision": self.revision}, key=event + ':queue')
+            request = {"task": arguments["task"], "requester": actor,
+                       "recipient": actor if private else None, "expectedRevision": self.revision}
+            if arguments.get("resume_following"):
+                request["resumeMovement"] = True
+            task = worker.task_client.enqueue(request, key=event + ':queue')
             if not task:
                 raise ValueError("Work changed while I was thinking. Please repeat the request")
             return {"ok": True, "id": task["id"], "message": f"Queued {task['id'][:8]}: {task['task']}. It will be attempted after the current action."}

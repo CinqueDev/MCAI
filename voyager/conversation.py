@@ -14,6 +14,7 @@ from langchain.schema import HumanMessage, SystemMessage
 from .llm import DeepSeekChat
 from .world_memory import CURRENT_PLAYER_PLACE
 from .conversation_tools import ConversationTools
+from .tasks import MinecraftConnectionLost
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +58,10 @@ Use resolve_target for references such as behind me, the block I am looking at,
 beside that chest, or a remembered landmark. Keep unresolved/ambiguous results as
 clarifications, not guessed coordinates. Use set_movement for continuous follow,
 stay, stop following and resume following; do not replace following with a single
-visit or queue an endless generated loop. A follow/stay mode yields to foreground
-requests and resumes afterward; low health pauses it for safety.
+visit or queue an endless generated loop. A new foreground request supersedes that requester's old follow/stay mode, including
+modes waiting in the queue. Use resume_following=true only when the player explicitly
+asks to resume the old mode after the new work. Other players' modes yield without
+being cancelled. Low health pauses movement for safety.
 For named builds use create_project with a complete blueprint, an explicit origin,
 materials, and bounds implied by the exact cells. Ask for missing specifications.
 Use execute=false only when the player asks for a plan rather than construction.
@@ -69,6 +72,11 @@ request. Removing/replacing needs exact positions and explicit expected blocks.
 Existing container operations may be learned; do not claim Phase 4 reliability.
 Tasks are queued at safe action boundaries; never claim
 you already performed them. Respect personal chests/builds and ask before altering them.
+When an explicit new Minecraft work request is missing details, use set_movement
+with mode=prepare_work and a question to supersede the requester's previous
+follow/stay mode and ask for those details. This does not queue or execute the new
+work. If the task is ready, queue_task/create_project already performs the handoff;
+do not prepare_work and queue separately in the same message.
 If can_queue_task is false, explain that the queue is full. Do not promise that
 work was queued. Ask clarifying questions before an underspecified request is
 queued. Avoid duplicating tasks already present in the execution context.
@@ -210,7 +218,12 @@ class ConversationWorker:
             self.thread.join(timeout=2)
 
     def request(self, payload):
-        response = requests.post(f"{self.env.server}/chat", json=payload, timeout=5)
+        try:
+            response = requests.post(f"{self.env.server}/chat", json=payload, timeout=5)
+        except requests.ConnectionError as error:
+            raise MinecraftConnectionLost("Minecraft bridge connection was lost") from error
+        if response.status_code == 409:
+            raise MinecraftConnectionLost("Minecraft conversation connection is unavailable")
         response.raise_for_status()
         return response.json()
 
@@ -219,6 +232,14 @@ class ConversationWorker:
             if self.env.connected:
                 try:
                     self.tick()
+                except MinecraftConnectionLost:
+                    # Chat polling can notice a kick while the action model is still
+                    # thinking. Rejoin here too; the environment serializes reconnects.
+                    if not self.stop_event.is_set():
+                        try:
+                            self.env.reconnect()
+                        except Exception:
+                            log.exception("Conversation reconnection failed; will retry")
                 except Exception:
                     log.exception("Conversation update failed; will retry")
             self.stop_event.wait(2)

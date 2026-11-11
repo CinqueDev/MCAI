@@ -12,6 +12,7 @@ import voyager.utils as U
 from .env import VoyagerEnv
 from .conversation import ConversationWorker
 from .world_memory import WorldMemory
+from .tasks import MinecraftConnectionLost
 from .llm import DEFAULT_MODEL, resolve_api_key
 
 from .agents import ActionAgent
@@ -519,6 +520,26 @@ class Voyager:
                 return None, future.result()
             time.sleep(0.2)
 
+    def _recover_rollout_error(self, error):
+        """Recover transport failures without discarding work or restoring old inventory."""
+        record = getattr(self, "active_task", None)
+        disconnected = isinstance(error, MinecraftConnectionLost)
+        changed = False
+        try:
+            if disconnected:
+                self.env.reconnect()
+            elif record:
+                changed = self.task_controller.complete(record, False, str(error)) is False
+        except MinecraftConnectionLost:
+            self.env.reconnect()
+            disconnected = True
+        self.active_task = None
+        self.env.execution = None
+        # Local errors (including recorder failures) never require a hard reset.
+        self.last_events = self.env.reset(options={"mode": "soft", "wait_ticks": self.env_wait_ticks})
+        return {"task": self.task, "success": False, "critique": str(error),
+                "interrupted": disconnected or changed, "controlled": disconnected or changed}
+
     def learn(self, reset_env=True):
         if self.resume:
             # keep the inventory
@@ -566,32 +587,9 @@ class Voyager:
                     context=context,
                     reset_env=reset_env,
                 )
-            except Exception as e:
-                time.sleep(3)  # wait for mineflayer to exit
-                info = {
-                    "task": task,
-                    "success": False,
-                }
-                if self.active_task:
-                    try:
-                        self.task_controller.complete(self.active_task, False, str(e))
-                    except Exception:
-                        logging.getLogger(__name__).warning("Could not finalize task after bridge failure; journal recovery will pause it")
-                    self.active_task = None
-                    self.env.execution = None
-                # reset bot status here
-                self.last_events = self.env.reset(
-                    options={
-                        "mode": "hard",
-                        "wait_ticks": self.env_wait_ticks,
-                        "inventory": self.last_events[-1][1]["inventory"],
-                        "equipment": self.last_events[-1][1]["status"]["equipment"],
-                        "position": self.last_events[-1][1]["status"]["position"],
-                    }
-                )
-                # use red color background to print the error
-                print("Your last round rollout terminated due to error:")
-                print(f"\033[41m{e}\033[0m")
+            except Exception as error:
+                logging.getLogger(__name__).exception("Task rollout failed; recovering without resetting inventory or position")
+                info = self._recover_rollout_error(error)
 
             if request and self.env.player_request and not info.get("controlled"):
                 if info.get("critique"):

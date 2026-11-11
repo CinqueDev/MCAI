@@ -218,3 +218,22 @@ test('a public project cannot publish a revision supplied privately and multipar
     assert.equal(s.controller.projects[0].versions.length, 1);
     assert.throws(() => s.create([{name:'oak_door',position:{x:0,y:0,z:0}}], {name:'door'}), /Multi-cell/);
 });
+
+test('creating a house project takes movement from following, with resumption only when explicitly requested', async t => {
+    for (const resume of [false, true]) {
+        const s = scene();
+        t.after(() => {s.bot.emit('end');});
+        s.bot.players.Alice = {username:'Alice',entity:{username:'Alice',id:1,position:new Vec3(2,64,0)}};
+        const following = s.controller.movementModes.request({mode:'follow',requester:'Alice'});
+        const house = s.create(line(1),{resume_following:resume});
+        await new Promise(setImmediate);
+        assert.equal(s.controller.get(following.id).state,resume ? 'queued':'cancelled');
+        const built = await s.batch(house);
+        assert.equal(built.project.state,'completed');
+        const active = s.controller.active(); s.controller.complete(active.id,active.generation,true);
+        s.controller.snapshot();
+        assert.equal(s.controller.active()?.id,resume ? following.id:undefined);
+        s.bot.emit('end');
+        await new Promise(setImmediate);
+    }
+});

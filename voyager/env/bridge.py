@@ -1,7 +1,7 @@
 import os.path
 import logging
 import threading
-from voyager.tasks import TaskClient
+from voyager.tasks import TaskClient, MinecraftConnectionLost
 import re
 import time
 import warnings
@@ -83,6 +83,7 @@ class VoyagerEnv(gym.Env):
         else:
             self.mc_instance = None
         self.has_reset = False
+        self._closing = False
         self.reset_options = None
         self.conversation = None
         self.current_task = None
@@ -160,12 +161,15 @@ class VoyagerEnv(gym.Env):
         if not self.has_reset or not self.reset_options:
             raise RuntimeError("Cannot reconnect before the first Minecraft connection")
         with self.reconnect_lock:
+            if self._closing:
+                raise RuntimeError("Minecraft environment is closing; reconnection cancelled")
             if not self.mineflayer.is_running:
                 self.mineflayer.run()
                 if not self.mineflayer.is_running:
                     raise RuntimeError("Could not restart the Minecraft bridge")
             probe = requests.post(f"{self.server}/tasks", json={"operation": "snapshot"}, timeout=10)
             if probe.status_code == 200:
+                self.connected = True
                 return
             self.connected = False
             options = {**self.reset_options, "reset": "soft", "inventory": {}, "equipment": [],
@@ -199,11 +203,18 @@ class VoyagerEnv(gym.Env):
         if self.world_memory:
             data["worldMemory"] = self.world_memory.context(self.current_task or "", actor=self.task_recipient,
                 kinds=["place", "resource", "storage", "project", "ownership"], limit=50)
-        res = requests.post(
-            f"{self.server}/step", json=data, timeout=self.request_timeout
-        )
+        try:
+            res = requests.post(f"{self.server}/step", json=data, timeout=self.request_timeout)
+        except requests.ConnectionError as error:
+            self.connected = False
+            raise MinecraftConnectionLost("Minecraft bridge connection was lost during the action") from error
+        if res.status_code == 409:
+            detail = res.json()
+            if detail.get("code") == "BOT_DISCONNECTED":
+                self.connected = False
+                raise MinecraftConnectionLost(detail.get("error", "Minecraft disconnected during the action"))
         if res.status_code != 200:
-            raise RuntimeError("Failed to step Minecraft server")
+            raise RuntimeError(f"Failed to step Minecraft server: {res.text}")
         returned_data = res.json()
         self.pause()
         events = json.loads(returned_data)
@@ -283,6 +294,7 @@ class VoyagerEnv(gym.Env):
         return events
 
     def close(self):
+        self._closing = True
         if self.conversation:
             self.conversation.stop()
         if self.connected:

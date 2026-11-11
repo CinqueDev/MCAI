@@ -123,12 +123,12 @@ class Projects {
             completed, unverified, remaining: this.cells(project).length - completed, materials: totals, missing,
             conflicts: conflicts.slice(0, 20), conflictCount: conflicts.length, lastVerified: project.lastVerified || null };
     }
-    enqueue(project, requester, recipient, requestKey = null, dependency = null) {
+    enqueue(project, requester, recipient, requestKey = null, dependency = null, resumeMovement = false) {
         const version = project.versions.at(-1).version;
         const existing = this.controller.records.find(t => t.projectId === project.id && ['queued', 'running', 'paused'].includes(t.state));
         if (existing) { project.currentTaskId = existing.id; return existing; }
         const task = this.controller.enqueue({ task: `Build project ${project.name} [${project.id.slice(0, 8)}] (version ${version})`, requester, recipient,
-            key: requestKey, context: `Execute only the approved blueprint via buildProjectBatch(bot, "${project.id}"). Never mine or clear unspecified cells.` });
+            key: requestKey, resumeMovement, context: `Execute only the approved blueprint via buildProjectBatch(bot, "${project.id}"). Never mine or clear unspecified cells.` });
         task.projectId = project.id; task.projectVersion = version;
         project.currentTaskId = task.id; task.dependsOnTask = dependency;
         project.status = 'queued'; project.updated = stamp(); this.sync(project);
@@ -144,7 +144,8 @@ class Projects {
         const privateChat = recipient === requester;
         if (!/^[A-Za-z0-9_]{1,16}$/.test(requester || '') || (recipient !== null && recipient !== requester)) throw new Error('Invalid project requester/channel.');
         const signature = JSON.stringify({ action, requester, recipient, identifier, name: request.name,
-            origin: request.origin, blocks: request.blocks, execute: request.execute, source: request.source });
+            origin: request.origin, blocks: request.blocks, execute: request.execute, source: request.source,
+            resumeMovement: request.resume_following === true });
         if (receiptKey && Object.hasOwn(this.controller.controlReceipts, receiptKey)) {
             const receipt = this.controller.controlReceipts[receiptKey];
             if (receipt.signature !== signature) throw new Error('Project request key reused with different content.');
@@ -175,13 +176,13 @@ class Projects {
             if (source && source.status !== 'resolved') throw new Error(source.reason);
             const description = `Obtain ${Object.entries(bounded).map(([n, count]) => `${count} ${n}`).join(', ')} for project ${project.name}. ` +
                 (source ? `Use only the authorized storage at ${JSON.stringify(source.position)} in ${source.dimension}; respect recorded access instructions.` : 'Gather/craft only these bounded amounts. Do not clear player structures or take from unspecified storage.');
-            const supply = this.controller.enqueue({ task: description, requester, recipient, priority: 110, key: receiptKey ? receiptKey + ':supply' : null });
+            const supply = this.controller.enqueue({ task: description, requester, recipient, priority: 110, resumeMovement: request.resume_following === true, key: receiptKey ? receiptKey + ':supply' : null });
             supply.projectSupplyFor = project.id;
-            const build = this.enqueue(project, requester, recipient, receiptKey ? receiptKey + ':build' : null, supply.id);
+            const build = this.enqueue(project, requester, recipient, receiptKey ? receiptKey + ':build' : null, supply.id, request.resume_following === true);
             build.dependsOnTask = supply.id;
             result = { ok: true, message: `Queued bounded supplies ${supply.id.slice(0, 8)}, then project ${project.name}.`, project: this.summary(project) };
         } else if (request.execute !== false) {
-            const task = this.enqueue(project, requester, recipient, receiptKey ? receiptKey + ':build' : null);
+            const task = this.enqueue(project, requester, recipient, receiptKey ? receiptKey + ':build' : null, null, request.resume_following === true);
             task.projectVersion = project.versions.at(-1).version;
             if (action === 'continue') task.dependsOnTask = null;
             result = { ok: true, message: `Saved project ${project.name}, version ${task.projectVersion}; task ${task.id.slice(0, 8)} is ${task.state}.`, project: this.summary(project) };

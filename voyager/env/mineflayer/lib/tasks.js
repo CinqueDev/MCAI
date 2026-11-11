@@ -129,6 +129,7 @@ class TaskController {
         priority = 100,
         key = null,
         expectedRevision = null,
+        resumeMovement = false,
     }) {
         if (expectedRevision !== null && expectedRevision !== this.revision)
             return null;
@@ -160,6 +161,7 @@ class TaskController {
             recipient,
             context,
             priority,
+            resumeMovement: resumeMovement === true,
             state: "queued",
             generation: 0,
             actions: [],

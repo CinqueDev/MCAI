@@ -229,6 +229,13 @@ app.post("/step", async (req, res) => {
     if (!req.body.execution && !req.body.code?.trim() && !req.body.programs?.trim())
         return res.json(stepBot.observe()); // Startup/refresh is read-only, even during a persistent mode.
     let lease, executionError;
+    const onDisconnect = reason => {
+        lease?.cleanup?.();
+        if (!res.headersSent && !res.destroyed) res.status(409).json({
+            code: "BOT_DISCONNECTED", error: typeof reason === "string" ? reason : "Minecraft disconnected during the action",
+        });
+    };
+    stepBot.once("end", onDisconnect);
     try {
         lease = controller.beginAction(req.body.execution);
         lease.targetMemory = Array.isArray(req.body.worldMemory) ? req.body.worldMemory : [];
@@ -250,7 +257,10 @@ app.post("/step", async (req, res) => {
             }
 
             process.on("uncaughtException", otherError);
-            lease.cleanup = () => process.off("uncaughtException", otherError);
+            lease.cleanup = () => {
+                process.off("uncaughtException", otherError);
+                bot.removeListener("physicsTick", onTick);
+            };
 
             const mcData = require("minecraft-data")(bot.version);
             mcData.itemsByName["leather_cap"] =
@@ -478,6 +488,7 @@ app.post("/step", async (req, res) => {
             else res.status(500).json({ error: error.message });
         }
     } finally {
+        stepBot.removeListener("end", onDisconnect);
         lease?.cleanup?.();
         if (lease?.abort.signal.aborted) await controller.interrupt();
         if (lease)

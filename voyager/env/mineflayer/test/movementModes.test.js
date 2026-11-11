@@ -44,7 +44,7 @@ test('following owns the task lease and cancellation leaves no late movement cal
 test('foreground work temporarily yields following, which resumes after the foreground task', async t => {
     const { bot, controller, modes } = scene(t);
     const following = modes.request({ mode: 'follow', requester: 'Alice' });
-    const foreground = controller.enqueue({ task: 'Bring Alice supplies', requester: 'Alice' });
+    const foreground = controller.enqueue({ task: 'Bring Alice supplies', requester: 'Alice', resumeMovement: true });
     assert.equal(controller.get(following.id).state, 'queued');
     assert.equal(controller.claim(foreground.id), null); // Old lease has not settled yet.
     await settle();
@@ -131,4 +131,58 @@ test('unreachable destinations fail without destructive fallback movement', asyn
     assert.equal(controller.get(stay.id).state, 'failed');
     assert.match(controller.get(stay.id).reason, /unreachable/);
     assert.equal(bot.pathfinder.goal, null);
+});
+
+test('a house request supersedes the same player follow mode instead of bringing it back after failure', async t => {
+    const { bot, controller, modes } = scene(t);
+    const following = modes.request({mode:'follow',requester:'Alice'});
+    const house = controller.enqueue({task:'Build a house where Alice is',requester:'Alice'});
+    assert.equal(controller.get(following.id).state, 'cancelled');
+    await settle();
+    assert.equal(bot.pathfinder.goal, null);
+    controller.claim(house.id);
+    controller.complete(house.id, house.generation, false, 'Need a blueprint');
+    controller.snapshot();
+    assert.equal(modes.running, null);
+    assert.equal(controller.active(), undefined);
+});
+
+test('foreground work also supersedes modes assigned after the request was already queued', async t => {
+    const { bot, controller, modes } = scene(t);
+    const followTask = controller.enqueue({task:'Follow Alice',requester:'Alice'});
+    controller.claim(followTask.id);
+    const lease = controller.beginAction({id:followTask.id,generation:followTask.generation});
+    const house = controller.enqueue({task:'Build a house at Alice',requester:'Alice'});
+    controller.context.run(lease, () => modes.assign('follow',{type:'player',name:'Alice'}));
+    controller.finishAction(lease, []);
+    await settle();
+    assert.equal(followTask.state, 'cancelled');
+    assert.equal(controller.claim(house.id).id, house.id);
+    assert.equal(bot.pathfinder.goal, null);
+});
+
+test('another player foreground work yields a mode without cancelling its owner request', async t => {
+    const { controller, modes } = scene(t);
+    const following = modes.request({mode:'follow',requester:'Alice'});
+    const request = controller.enqueue({task:'Help Bob',requester:'Bob'});
+    await settle();
+    assert.equal(controller.get(following.id).state, 'queued');
+    controller.claim(request.id); controller.complete(request.id,request.generation,true);
+    controller.snapshot();
+    assert.equal(controller.active().id, following.id);
+});
+
+test('preparing an underspecified house stops only requester movement and asks before queuing work', async t => {
+    const {bot,controller,modes} = scene(t);
+    const following = modes.request({mode:'follow',requester:'Alice'});
+    const result = modes.request({mode:'prepare_work',requester:'Alice',question:'What size and materials should the house use?',key:'prepare-house'});
+    await settle();
+    assert.equal(controller.get(following.id).state,'cancelled');
+    assert.equal(bot.pathfinder.goal,null);
+    assert.match(result.message,/What size and materials/);
+    assert.equal(controller.records.length,1);
+    assert.deepEqual(modes.request({mode:'prepare_work',requester:'Alice',question:'What size and materials should the house use?',key:'prepare-house'}),result);
+    modes.request({mode:'follow',requester:'Alice'});
+    modes.request({mode:'prepare_work',requester:'Bob',question:'Where should I build?'});
+    assert.equal(controller.active().requester,'Alice');
 });

@@ -320,6 +320,15 @@ usernames allowed to control other tasks. Any player can stop autonomous curricu
 work; only the player who paused/stopped work or an operator can resume that halt.
 These direct controls remain available when the social model is disabled.
 
+Disconnects during an action return a typed connection-loss response immediately,
+even if an old inventory transaction has not settled. Chat polling can also detect
+connection loss while an action-model call is pending. Concurrent reconnects are
+serialized, and shutdown prevents queued reconnect attempts. Recovery rejoins softly and
+uses the journal's receipts; uncertain item operations still require review. Local
+errors never trigger inventory/position restoration or a hard reset. Event-record
+filenames use a bounded task slug and hash so long construction requests cannot
+fail with a filesystem filename-length error.
+
 Task IDs, requesters, channels, priorities, lifecycle states, action IDs, operation
 states and verified receipts are saved atomically under `<ckpt_dir>/tasks/`.
 Journal files use the current host, login identifier and `world_id`, or the port
@@ -349,7 +358,7 @@ Chat requests now have explicit action helpers:
 | Request | Helper | Behavior |
 | --- | --- | --- |
 | “Follow me at 3 blocks” | `followPlayer(bot, username, distance)` | Continuous following until stopped, interrupted by danger, or the player is lost. |
-| “Stay here” / “stay at home” | `stayAt(bot, reference)` | Hold a resolved position; yield temporarily to foreground requests. |
+| “Stay here” / “stay at home” | `stayAt(bot, reference)` | Hold a resolved position until stopped or superseded by new work. |
 | “Come behind me” / “beside that chest” / “go home” | `resolveTarget` / `moveToTarget` | Resolve a typed reference or ask for clarification; never invent an unseen target. |
 | “Come here” | `moveToPlayer(bot, username)` | Walk to a currently visible player and face them. |
 | “Meet me at 100, 64, -20” | `moveToPosition(bot, position)` | Walk to coordinates in the current dimension. |
@@ -374,7 +383,14 @@ Blueprints can specify the limited verified states described below.
 
 Persistent follow/stay modes use the durable task controller's movement lease.
 Foreground player work has priority over these modes; autonomous curriculum waits.
-A mode resumes automatically after foreground work and after a safe reconnect.
+A new foreground request from the same player supersedes their old mode, including
+modes still waiting in the queue. If the player explicitly asks to follow again
+after the work, the tool sets `resume_following=true`; the mode then yields and
+resumes afterward. Other players' work temporarily yields a mode without cancelling
+its owner's request. When a new work request needs details, the agent can stop the
+requester's old movement and ask its clarification through `prepare_work` in the
+movement tool; it does not queue a speculative task. Safe modes still recover
+automatically after reconnect.
 You can pause/stop/cancel it, or ask to stop/resume following in ordinary language.
 Following stops moving immediately when the loaded player disappears, waits up to
 15 seconds for them to reappear, and reports a lost player if they remain absent.
