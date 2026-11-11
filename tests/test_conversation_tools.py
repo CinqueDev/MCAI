@@ -18,11 +18,16 @@ def answer(content=None, calls=()):
 
 
 class NativeLLM:
-    def __init__(self, answers):
+    def __init__(self, answers, reviews=()):
         self.answers = iter(answers)
+        self.reviews = iter(reviews)
         self.requests = []
+        self.review_requests = []
 
     def complete(self, messages, tools=None):
+        if tools is None:
+            self.review_requests.append(copy.deepcopy(messages))
+            return answer(json.dumps(next(self.reviews, {"intent": "chat", "needs_action": False})))
         self.requests.append((copy.deepcopy(messages), tools))
         return next(self.answers)
 
@@ -47,6 +52,74 @@ class ConversationToolTests(unittest.TestCase):
     def source(self, text, **extra):
         return {"id": 1, "sender": "Alice", "channel": "private", "text": text,
                 "requesterLocation": {"x": 4, "y": 64, "z": 8}, "requesterDimension": "overworld", **extra}
+
+    def test_unearned_plain_text_movement_promise_is_repaired_into_actual_work(self):
+        llm = NativeLLM([answer('{"reply":"On my way!"}'),
+                         answer(calls=[('queue_task', {'task':'Approach Alice and stop nearby'})]),
+                         answer('{"reply":"On my way!"}')], reviews=[{'intent':'work','needs_action':True}])
+        self.tasks.enqueue.return_value = {'id':'abcdefgh1','task':'Approach Alice and stop nearby'}
+        worker = self.worker(llm)
+        worker.respond(self.snapshot, self.source('Hey come over here'))
+        self.tasks.enqueue.assert_called_once()
+        self.assertIn('Queued abcdefgh', worker.request.call_args.args[0]['text'])
+        self.assertEqual(len(llm.review_requests),1)
+
+    def test_untagged_request_survives_cooldown_and_a_later_queue_command_cursor(self):
+        incoming = self.source('Hey come over here',id=3,channel='public',required=False,outgoing=False)
+        data = {**self.snapshot,'username':'Voyager','players':['Alice'],'pending':[], 'cursor':8,
+                'history':[incoming,{'id':4,'sender':'Alice','channel':'public','text':'queue','control':True,'outgoing':False}],
+                'unprocessed':[incoming]}
+        llm = NativeLLM([answer('{"reply":"On my way!"}'),
+                         answer(calls=[('queue_task', {'task':'Approach Alice and stop nearby'})]),
+                         answer('{"reply":"Queued"}')],reviews=[{'intent':'work','needs_action':True}])
+        self.tasks.enqueue.return_value = {'id':'abcdefgh1','task':'Approach Alice and stop nearby'}
+        worker = self.worker(llm)
+        worker.session = data['session']; worker.cursor = 8
+        worker.next_optional = worker.quiet_until = float('inf')
+        delivered = []
+        def transport(payload):
+            if not payload: return data
+            if 'text' in payload:
+                self.tasks.enqueue.assert_called_once()
+                delivered.append(payload)
+                return {'delivered':True}
+            return {'acknowledged':True}
+        worker.request = Mock(side_effect=transport)
+        worker.tick()
+        self.assertEqual(delivered[0]['replyTo'],3)
+        self.assertIn('Queued',delivered[0]['text'])
+        self.assertEqual(self.tasks.enqueue.call_args.args[0]['requester'],'Alice')
+        self.assertEqual(worker.cursor,8)
+
+    def test_optional_social_messages_are_reviewed_but_remain_silent_during_cooldown(self):
+        incoming = self.source('nice weather',id=3,channel='public',required=False,outgoing=False)
+        data = {**self.snapshot,'players':['Alice'],'pending':[], 'cursor':3,'unprocessed':[incoming]}
+        worker = self.worker(NativeLLM([answer('{"reply":"Nice weather!"}')]))
+        worker.session=data['session']; worker.next_optional=float('inf')
+        worker.request=Mock(side_effect=lambda payload: data if not payload else {'acknowledged':True})
+        worker.tick()
+        self.assertFalse(any('text' in call.args[0] for call in worker.request.call_args_list))
+        self.assertEqual(worker.request.call_args.args[0]['ack'],3)
+        self.tasks.enqueue.assert_not_called()
+
+    def test_repeated_plain_promises_cannot_be_delivered_as_confirmed_work(self):
+        llm = NativeLLM([answer('{"reply":"On my way!"}'), answer('{"reply":"Coming now!"}')],
+            reviews=[{'intent':'work','needs_action':True},{'intent':'work','needs_action':True}])
+        worker = self.worker(llm)
+        worker.respond(self.snapshot,self.source('come to me'))
+        self.tasks.enqueue.assert_not_called()
+        self.assertIn('no corresponding action was confirmed',worker.request.call_args.args[0]['text'])
+        self.assertEqual(len(llm.requests),2)
+
+    def test_action_review_does_not_receive_other_private_conversations(self):
+        llm = NativeLLM([answer('{"reply":"Hello"}')])
+        worker = self.worker(llm)
+        data = {**self.snapshot,'history':[{**m, 'outgoing':False} for m in [self.source('Alice context'),
+            self.source('Bob secret',sender='Bob',id=2), self.source('public hello',channel='public',id=3)]]}
+        worker.respond(data,self.source('hello'))
+        review_data=json.loads(llm.review_requests[0][1]['content'])
+        self.assertNotIn('Bob secret',json.dumps(review_data))
+        self.assertIn('Alice context',json.dumps(review_data))
 
     def test_native_prompt_has_one_action_protocol_and_a_chat_only_final_schema(self):
         llm = NativeLLM([answer('{"reply":"Hello","quiet_seconds":0}')])

@@ -38,10 +38,12 @@ class DeepSeekChat:
             max_retries=3,
         )
 
-    def complete(self, messages, tools=None):
+    def complete(self, messages, tools=None, json_output=False):
         """Native tool-call turn; callers execute tools and return their receipts."""
         roles = {"system": "system", "human": "user", "ai": "assistant"}
         options = {}
+        if json_output:
+            options["response_format"] = {"type": "json_object"}
         if tools:
             options["tools"] = tools
             options["tool_choice"] = "auto"
@@ -63,6 +65,9 @@ class DeepSeekChat:
         if not choice.message.content or not choice.message.content.strip():
             raise ValueError("DeepSeek returned an empty answer.")
         return choice.message
+
+    def complete_json(self, messages):
+        return self.complete(messages, json_output=True)
 
     def __call__(self, messages):
         return AIMessage(content=self.complete(messages).content)

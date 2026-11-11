@@ -128,3 +128,28 @@ test("a control received before task initialization is handled after initializat
     assert.equal(chat.pending.size, 0);
     assert.equal(chat.history.at(-1).text, "Resumed");
 });
+
+test('untagged messages remain in the inbox across queue commands and accept replies bound to their sender', async () => {
+    const {bot,chat,wire} = setup();
+    bot.emit('chat','Alice','Hey come over here');
+    const incoming = chat.snapshot().unprocessed[0];
+    assert.equal(incoming.required,false);
+    bot.tasks = {control:async()=> 'Interpreting one message', snapshot:()=>({})};
+    bot.emit('chat','Alice','queue');
+    await new Promise(setImmediate);
+    assert.equal(chat.snapshot().unprocessed[0].id,incoming.id);
+    await chat.send({session:chat.session,key:'approach-receipt',replyTo:incoming.id,text:'Queued approach to Alice',recipient:'Bob'});
+    assert.equal(wire.at(-1),'Queued approach to Alice');
+    assert.equal(chat.snapshot().unprocessed.length,0);
+});
+
+test('silence acknowledges optional input without clearing a required reply or crossing sessions', () => {
+    const {bot,chat} = setup();
+    bot.emit('chat','Alice','hello everyone');
+    const id = chat.snapshot().unprocessed[0].id;
+    assert.throws(()=>chat.acknowledge('old',id),/connection changed/);
+    chat.acknowledge(chat.session,id);
+    assert.equal(chat.snapshot().unprocessed.length,0);
+    bot.emit('whisper','Alice','come over here');
+    assert.throws(()=>chat.acknowledge(chat.session,chat.snapshot().pending[0].id),/required reply/i);
+});

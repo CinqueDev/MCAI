@@ -15,6 +15,7 @@ class Conversation {
         this.history = [];
         this.events = [];
         this.pending = new Map();
+        this.inbox = new Map();
         this.delivery = new ChatDelivery(this, deliveryOptions);
         this.lastSpoke = now();
         this.task = null;
@@ -125,6 +126,7 @@ class Conversation {
         entry.requesterDimension = player?.position
             ? this.bot.game?.dimension || null
             : null;
+        this.inbox.set(entry.id, entry);
         if (required) this.pending.set(entry.id, entry);
         this.handleControl(entry);
     }
@@ -137,6 +139,7 @@ class Conversation {
             entry.required = true;
             this.pending.set(entry.id, entry);
             entry.control = true;
+            this.inbox.delete(entry.id);
             const response = control.command === "cmds"
                 ? Promise.resolve(renderCommandHelp(this.bot.username))
                 : this.bot.tasks.control(control.command, sender, control.id, channel, control.target);
@@ -170,6 +173,7 @@ class Conversation {
             events: this.events,
             history: this.history,
             pending: [...this.pending.values()].filter((m) => !m.control),
+            unprocessed: [...this.inbox.values()].filter(m => !m.control),
             taskControl: this.bot.tasks?.snapshot(),
             task: this.task,
             lastSpoke: this.lastSpoke,
@@ -183,6 +187,18 @@ class Conversation {
         };
     }
 
+    pendingInputCount(sender = null, channel = "public") {
+        return [...this.inbox.values()].filter(m => !m.control && (m.channel === "public" ||
+            (channel === "private" && m.sender.toLowerCase() === sender?.toLowerCase()))).length;
+    }
+    acknowledge(session, id) {
+        if (session !== this.session) throw new Error("Conversation connection changed");
+        if (!Number.isInteger(id) || id < 1 || id > this.sequence) throw new Error("Unknown message ID");
+        if (this.pending.has(id)) throw new Error("A required reply must be delivered before acknowledging it");
+        this.inbox.delete(id);
+        return { acknowledged: true };
+    }
+
     send({ session, key, replyTo, recipient, text }) {
         if (session !== this.session)
             throw new Error("Conversation connection changed");
@@ -190,7 +206,7 @@ class Conversation {
             throw new Error("Missing delivery key");
         const existing = this.delivery.existing(key);
         if (existing) return existing;
-        const original = replyTo == null ? null : this.pending.get(replyTo);
+        const original = replyTo == null ? null : this.pending.get(replyTo) || this.inbox.get(replyTo);
         if (replyTo != null && !original)
             throw new Error("Message already answered or unknown");
         // Routing comes from the received event, never from the language model.

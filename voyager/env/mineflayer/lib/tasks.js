@@ -116,6 +116,7 @@ class TaskController {
             revision: this.revision,
             busy: Boolean(this.lease || this.cleanupCount),
             planning: this.planning,
+            interpreting: this.bot.conversation?.inbox?.size || 0,
             suspended: this.suspended,
             active: this.active() || null,
             tasks: this.records,
@@ -181,6 +182,7 @@ class TaskController {
             : this.records
                   .filter((t) => t.state === "queued" && (!t.dependsOnTask || this.get(t.dependsOnTask)?.state === "completed"))
                   .sort((a, b) => b.priority - a.priority || a.updated.localeCompare(b.updated))[0];
+        if (record && !record.requester && (this.bot.conversation?.inbox?.size || 0) > 0) return null;
         if (!record || record.state !== "queued" || (record.dependsOnTask && this.get(record.dependsOnTask)?.state !== "completed")) return null;
         record.state = "running";
         this.revision++;
@@ -291,6 +293,8 @@ class TaskController {
             record = matches[0];
         } else record = this.active();
         if (command === "status" || command === "queue") {
+            const interpreting = this.bot.conversation?.pendingInputCount?.(sender, channel) || 0;
+
             const visible = this.records.filter(
                 (t) =>
                     (!t.recipient ||
@@ -310,6 +314,8 @@ class TaskController {
                 return this.suspended
                     ? "A private task is paused. Ask privately for status and recovery instructions."
                     : "A private task is active. Ask privately for its status.";
+            if (interpreting && !visible.length && !this.active())
+                return `Interpreting ${interpreting} new player message(s); no active task yet.`;
             const halt = this.suspended
                 ? "Work is paused; resume is needed before queued work can run. "
                 : "";
@@ -447,6 +453,11 @@ class TaskController {
                 record.generation !== execution.generation)
         )
             throw new TaskInterrupted();
+        if (record && !record.requester && (this.bot.conversation?.inbox?.size || 0) > 0) {
+            record.state = "queued"; record.generation++; record.updated = new Date().toISOString();
+            this.save();
+            throw new TaskInterrupted("Player input is being interpreted before autonomous work");
+        }
         if (this.suspended) throw new TaskInterrupted();
         if (record) this.observationRecipient = record.recipient || null;
         const action = {

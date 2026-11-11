@@ -4,6 +4,7 @@ import logging
 import math
 import re
 from pathlib import Path
+from .request_review import review_turn
 
 log = logging.getLogger(__name__)
 
@@ -196,6 +197,7 @@ class ConversationTools:
                         raise ValueError("Expected conversation object")
                 except (ValueError, TypeError):
                     decision = {"reply": answer.content}
+                legacy = []
                 if self.authoritative:
                     decision["reply"] = ' '.join(self.authoritative)
                 else:
@@ -216,6 +218,23 @@ class ConversationTools:
                                 "the request just because you used the wrong response format."})
                             continue
                         decision["reply"] = "I couldn't carry out that request. No work or memory change was confirmed."
+                if not self.authoritative and self.source and not legacy:
+                    assessment = review_turn(self.worker.llm, self.snapshot, self.source, decision.get("reply"), self.receipts)
+                    log.info("Conversation action review: intent=%s needs_action=%s", assessment['intent'], assessment['needs_action'])
+                    decision['_conversational_only'] = assessment['intent'] == 'chat'
+                    if assessment['needs_action']:
+                        if not repaired:
+                            repaired = True
+                            transcript.append({"role": "assistant", "content": answer.content})
+                            transcript.append({"role": "system", "content":
+                                "The original player request still needs an actual tool action. No corresponding action "
+                                "was confirmed. Do not acknowledge it with only a promise. Call the appropriate "
+                                "movement/work/control/memory tool for that original request, inspect the result, "
+                                "then reply. Use known player coordinates; do not ask for them again. If genuinely "
+                                "missing details, use prepare_work with the clarification question. Do not invent "
+                                "a tool receipt or silently replace the request with autonomous work."})
+                            continue
+                        decision['reply'] = "I couldn't start that request; no corresponding action was confirmed."
                 # Native tools perform actions. Legacy JSON cannot perform them twice.
                 decision.update(task=None, memory_ops=[], task_control=None)
                 decision.pop("memory", None)

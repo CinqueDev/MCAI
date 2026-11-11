@@ -446,3 +446,17 @@ test('native control receipts are idempotent, durable and reject stale or ambigu
         await assert.rejects(recovered.executeControl({ ...request, command: 'stop' }), /reused/);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+
+test('uninterpreted player input blocks new autonomous actions and queue reports the pending interpretation', async () => {
+    const {bot,controller} = fixture();
+    const mining = controller.enqueue({task:'Mine iron',priority:0});
+    controller.claim(mining.id);
+    bot.emit('chat','Alice','Hey come over here');
+    assert.throws(()=>controller.beginAction({id:mining.id,generation:mining.generation}),TaskInterrupted);
+    assert.equal(mining.state,'queued');
+    assert.equal(controller.claim(mining.id),null);
+    const status = await controller.control('status','Alice');
+    assert.match(status,/Interpreting/);
+    const approach = controller.enqueue({task:'Approach Alice',requester:'Alice'});
+    assert.equal(controller.claim().id,approach.id);
+});

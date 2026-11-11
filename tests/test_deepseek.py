@@ -84,6 +84,15 @@ class DeepSeekTests(unittest.TestCase):
                        {"role": "tool", "tool_call_id": "cancel-1", "content": '{"ok":true,"message":"Cancelled"}'}], tools=API_TOOLS)
         self.assertEqual(json.loads(self.requests[-1].content)["messages"][-1]["role"], "tool")
 
+    def test_semantic_review_uses_json_output_without_changing_action_generation(self):
+        chat = DeepSeekChat(api_key="test")
+        self.content = '{"intent":"work","needs_action":true}'
+        chat.complete_json([SystemMessage(content='Return JSON intent and needs_action.')])
+        self.assertEqual(json.loads(self.requests[-1].content)['response_format'], {'type':'json_object'})
+        self.content = 'javascript code'
+        chat([HumanMessage(content='write code')])
+        self.assertNotIn('response_format', json.loads(self.requests[-1].content))
+
     def test_environment_configuration(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "env-key", "DEEPSEEK_BASE_URL": "https://gateway.example/v1"}, clear=True):
             chat = DeepSeekChat(model_name="custom-model")

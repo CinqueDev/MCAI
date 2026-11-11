@@ -96,7 +96,12 @@ class TaskClient:
                 recovered = True
                 continue
             recovered = False  # A healthy snapshot permits recovery from a later, separate disconnect.
-            if not state["suspended"] and not state.get("busy"):
+            tasks = state.get("tasks", [])
+            states = {t["id"]: t["state"] for t in tasks}
+            foreground = bool((state.get("active") or {}).get("requester")) or any(
+                t.get("requester") and t["state"] == "queued" and
+                (not t.get("dependsOnTask") or states.get(t["dependsOnTask"]) == "completed") for t in tasks)
+            if not state["suspended"] and not state.get("busy") and (not state.get("interpreting") or foreground):
                 return
             active = state.get("active") or {}
             notice = (active.get("id"), active.get("needsReview"))

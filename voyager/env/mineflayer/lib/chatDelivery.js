@@ -58,7 +58,10 @@ class ChatDelivery {
                 delivery.next++;
                 conversation.lastSpoke = conversation.now();
             }
-            if (original) conversation.pending.delete(original.id);
+            if (original) {
+                conversation.pending.delete(original.id);
+                conversation.inbox?.delete(original.id);
+            }
             delivery.state = "completed";
             // Keep retry receipts bounded, while retaining in-progress partial deliveries.
             for (const [oldKey, old] of this.deliveries) {

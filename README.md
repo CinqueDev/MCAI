@@ -281,6 +281,19 @@ executes legacy fields directly or repeats an already confirmed mutation. Intern
 diagnostics record protocol repairs and tool result status without logging private
 message contents. The protocol follows [DeepSeek's tool-call documentation](https://api-docs.deepseek.com/guides/tool_calls/).
 
+Incoming messages remain in a separate unprocessed inbox until answered or
+acknowledged. Untagged work requests bypass optional social-chat cooldowns, and
+later queue/status messages cannot discard an earlier request. Autonomous work
+waits for input interpretation; queue/status can report that interpretation is
+pending instead of implying that an action was already queued.
+
+A separate semantic review checks plain-text answers against the original request
+and actual tool receipts. An unsupported promise such as “On my way” triggers a
+bounded corrective tool turn, just like obsolete action JSON. It does not become
+a task by parsing fixed user phrases. Normal conversation remains optional; only
+actual tool results confirm work. The review uses [DeepSeek JSON output](https://api-docs.deepseek.com/guides/json_mode/)
+and retries malformed review output once.
+
 Long replies are split into word-aware chunks and sent about 1.2 seconds apart.
 Each private chunk uses `/msg` to the original sender; retries resume the same
 reply instead of repeating chunks already sent.

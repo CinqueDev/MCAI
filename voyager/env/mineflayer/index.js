@@ -579,6 +579,7 @@ app.post("/chat", async (req, res) => {
     if (!bot?.conversation)
         return res.status(409).json({ error: "Bot not connected" });
     try {
+        if (req.body.ack !== undefined) return res.json(bot.conversation.acknowledge(req.body.session, req.body.ack));
         if (req.body.text !== undefined) {
             let timer;
             try {

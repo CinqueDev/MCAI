@@ -132,3 +132,11 @@ class ReadinessAndDispatchTests(unittest.TestCase):
             env.close()
         post.assert_not_called()
         env.mineflayer.stop.assert_called_once()
+
+    def test_autonomous_dispatch_waits_for_player_input_interpretation_but_accepts_actual_foreground_work(self):
+        client = TaskClient(Mock())
+        client.snapshot = Mock(side_effect=[{'suspended':False,'busy':False,'interpreting':1,'tasks':[]},
+            {'suspended':False,'busy':False,'interpreting':1,'tasks':[{'id':'come','state':'queued','requester':'Alice'}]}])
+        with patch('voyager.tasks.time.sleep') as sleep:
+            client.wait_ready()
+        sleep.assert_called_once()
