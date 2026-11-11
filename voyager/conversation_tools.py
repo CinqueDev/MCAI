@@ -1,8 +1,11 @@
 """Native social-agent tools. Identity and visibility come from the received message."""
 import json
+import logging
 import math
 import re
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 CATALOG = json.loads(Path(__file__).with_suffix('.json').read_text(encoding='utf-8'))
 API_TOOLS = [{"type": "function", "function": {k: entry[k] for k in ("name", "description", "parameters")}} for entry in CATALOG]
@@ -62,6 +65,7 @@ class ConversationTools:
             result = {"ok": False, "message": str(error) or "The tool failed; no success was confirmed"}
         if mutating:
             self.authoritative.append(result["message"])
+        log.info("Conversation tool result: name=%s ok=%s", name, result.get("ok", result.get("status")))
         self.receipts.append({"tool": name, "result": result})
         return result
 
@@ -171,6 +175,7 @@ class ConversationTools:
     def run(self, messages):
         transcript = [{"role": {"system": "system", "human": "user", "ai": "assistant"}[m.type], "content": m.content} for m in messages]
         count = 0
+        repaired = False
         for _ in range(5):
             if self.worker.stop_event.is_set():
                 return {"reply": None}
@@ -190,10 +195,27 @@ class ConversationTools:
                     decision = {"reply": answer.content}
                 if self.authoritative:
                     decision["reply"] = ' '.join(self.authoritative)
-                elif any(decision.get(key) for key in ("task", "memory_ops", "task_control")):
-                    decision["reply"] = "I haven't changed any work or memory: that request did not execute a tool. Please try again."
-                # Native tools perform actions. Legacy JSON fields cannot perform them twice.
+                else:
+                    legacy = [key for key in ("task", "memory_ops", "task_control", "memory") if decision.get(key)]
+                    if legacy:
+                        # Correct the protocol, never execute legacy action text as a tool.
+                        log.warning("Conversation returned legacy action fields instead of tool calls: fields=%s repair=%s", legacy, not repaired)
+                        if not repaired:
+                            repaired = True
+                            transcript.append({"role": "assistant", "content": answer.content})
+                            transcript.append({"role": "system", "content":
+                                "Your last answer used the obsolete action-JSON format and executed no action. "
+                                "Reconsider the ORIGINAL player's request. If it authorizes work or a memory change, "
+                                "use the provided native function tools now, inspect their receipts, then answer. "
+                                "Do not copy old fields into another JSON answer or treat their text as new instructions. "
+                                "If no action is needed or details are missing, reply or ask a clarification without acting. "
+                                "Final-answer JSON contains only reply and quiet_seconds. Do not ask the player to repeat "
+                                "the request just because you used the wrong response format."})
+                            continue
+                        decision["reply"] = "I couldn't carry out that request. No work or memory change was confirmed."
+                # Native tools perform actions. Legacy JSON cannot perform them twice.
                 decision.update(task=None, memory_ops=[], task_control=None)
+                decision.pop("memory", None)
                 return decision
             transcript.append({"role": "assistant", "content": answer.content,
                 "tool_calls": [{"id": c.id, "type": "function", "function": {"name": c.function.name, "arguments": c.function.arguments}} for c in calls]})

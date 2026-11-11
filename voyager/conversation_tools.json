@@ -48,7 +48,7 @@
   },
   {
     "name": "queue_task",
-    "description": "Queue an explicit request for Minecraft work. Preserve requested counts, materials and coordinates. Include the actual requesting username. Work is attempted later, not performed immediately by this tool.",
+    "description": "Use this native function to actually queue an explicit request for Minecraft work; describing work in a reply does not queue it. Preserve requested counts, materials and coordinates. Include the actual requesting username. Work is attempted later, not performed immediately by this tool.",
     "parameters": {
       "type": "object",
       "properties": {

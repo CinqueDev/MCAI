@@ -273,7 +273,13 @@ need to memorize sentences. The application binds the caller and reply channel,
 executes the tool, and feeds the receipt back to the model. Mutating tool receipts
 supply the acknowledgement, so a failed cancellation cannot be reported as a
 success. Short controls such as `stop` remain immediate even while a model call
-is in progress. The protocol follows [DeepSeek's tool-call documentation](https://api-docs.deepseek.com/guides/tool_calls/).
+is in progress. Native prompts use a chat-only final response schema; the legacy
+JSON action format is supplied only to clients without native tool support. If a
+native model returns that obsolete format, the worker requests one corrective
+turn automatically and still requires a real, authorized tool call. It never
+executes legacy fields directly or repeats an already confirmed mutation. Internal
+diagnostics record protocol repairs and tool result status without logging private
+message contents. The protocol follows [DeepSeek's tool-call documentation](https://api-docs.deepseek.com/guides/tool_calls/).
 
 Long replies are split into word-aware chunks and sent about 1.2 seconds apart.
 Each private chunk uses `/msg` to the original sender; retries resume the same

@@ -48,6 +48,73 @@ class ConversationToolTests(unittest.TestCase):
         return {"id": 1, "sender": "Alice", "channel": "private", "text": text,
                 "requesterLocation": {"x": 4, "y": 64, "z": 8}, "requesterDimension": "overworld", **extra}
 
+    def test_native_prompt_has_one_action_protocol_and_a_chat_only_final_schema(self):
+        llm = NativeLLM([answer('{"reply":"Hello","quiet_seconds":0}')])
+        worker = self.worker(llm)
+        worker.respond(self.snapshot, self.source('hello'))
+        prompt = llm.requests[0][0][0]['content']
+        self.assertNotIn('you may return a task', prompt)
+        self.assertNotIn('memory_ops', prompt)
+        self.assertNotIn('task_control', prompt)
+        self.assertNotIn('memory (list of strings)', prompt)
+        self.assertIn('native function calls', prompt)
+        self.assertIn('reply (string or null)', prompt)
+        self.tasks.enqueue.assert_not_called()
+        self.assertEqual(len(llm.requests), 1)
+
+    def test_legacy_task_response_is_repaired_into_a_real_tool_without_user_retry(self):
+        llm = NativeLLM([answer('{"reply":"I will bring it","task":"Bring Alice a pickaxe"}'),
+            answer(calls=[('queue_task', {'task':'Bring Alice a pickaxe'})]),
+            answer('{"reply":"Queued"}')])
+        self.tasks.enqueue.return_value = {'id':'abcdefgh-1','task':'Bring Alice a pickaxe'}
+        worker = self.worker(llm)
+        with self.assertLogs('voyager.conversation_tools', level='WARNING'):
+            worker.respond(self.snapshot, self.source('bring me a pickaxe'))
+        self.tasks.enqueue.assert_called_once()
+        self.assertIn('Queued abcdefgh', worker.request.call_args.args[0]['text'])
+        repair = llm.requests[1][0][-1]
+        self.assertEqual(repair['role'], 'system')
+        self.assertIn('ORIGINAL', repair['content'])
+        self.assertEqual(self.tasks.enqueue.call_args.kwargs['key'], 'session:1:tool:queue')
+
+    def test_legacy_memory_response_is_repaired_and_saves_real_requester_coordinates(self):
+        llm = NativeLLM([answer('{"reply":"Saved home","memory_ops":[{"op":"remember","kind":"place","name":"home"}]}'),
+            answer(calls=[('remember_location', {'name':'home'})]), answer('{"reply":"Saved"}')])
+        worker = self.worker(llm)
+        with self.assertLogs('voyager.conversation_tools', level='WARNING'):
+            worker.respond(self.snapshot, self.source('remember this spot as home'))
+        self.assertEqual(self.memory.search('home', actor='Alice')[0]['data']['position'], {'x':4,'y':64,'z':8})
+        self.assertIn('Saved home at (4, 64, 8)', worker.request.call_args.args[0]['text'])
+        self.assertEqual(self.memory.search('home'), [])
+
+    def test_repair_is_bounded_and_never_executes_legacy_fields_directly(self):
+        llm = NativeLLM([answer('{"reply":"Cancelled","task_control":{"command":"cancel"}}'),
+                         answer('{"reply":"Cancelled","task_control":{"command":"cancel"}}')])
+        worker = self.worker(llm)
+        with self.assertLogs('voyager.conversation_tools', level='WARNING'):
+            worker.respond(self.snapshot, self.source('cancel the beehive task'))
+        self.tasks.control.assert_not_called()
+        self.assertEqual(len(llm.requests), 2)
+        self.assertIn('No work or memory change was confirmed', worker.request.call_args.args[0]['text'])
+
+    def test_repair_does_not_repeat_a_mutation_already_confirmed_by_a_tool(self):
+        llm = NativeLLM([answer(calls=[('control_task', {'command':'cancel','target':'beehive'})]),
+                         answer('{"reply":"Cancelled","task_control":{"command":"cancel"}}')])
+        self.tasks.control.return_value = {'ok':True,'message':'Cancelled abcdefgh.'}
+        worker = self.worker(llm)
+        worker.respond(self.snapshot, self.source('cancel the beehive task'))
+        self.tasks.control.assert_called_once()
+        self.assertEqual(len(llm.requests), 2)
+        self.assertEqual(worker.request.call_args.args[0]['text'], 'Cancelled abcdefgh.')
+
+    def test_repair_never_promotes_legacy_notes_into_implicit_memory_writes(self):
+        llm = NativeLLM([answer('{"reply":"Hello","memory":["Invented fact"]}'), answer('{"reply":"Hello"}')])
+        worker = self.worker(llm)
+        with self.assertLogs('voyager.conversation_tools', level='WARNING'):
+            worker.respond(self.snapshot, self.source('hello'))
+        self.assertEqual(self.memory.search(actor='Alice'), [])
+        self.tasks.enqueue.assert_not_called()
+
     def test_natural_cancellation_executes_tool_and_uses_real_receipt(self):
         llm = NativeLLM([answer(calls=[('control_task', {"command": "cancel", "target": "beehive"})]),
                          answer('{"reply":"Cancelled everything!"}')])

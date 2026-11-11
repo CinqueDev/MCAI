@@ -56,7 +56,7 @@ function renderCommandHelp(username) {
         "[Memory requests] " + MEMORY.flatMap(m => m.examples).join("; ") + ".",
         "Current-location saves use YOUR loaded coordinates; no label saves as <player>'s saved location. Private memory stays private. If your position is unknown, provide coordinates and dimension.",
         "[Gameplay requests] " + ACTIONS.map(a => a.example).join("; ") + ".",
-        "[Natural-language tools] " + TOOL_CATALOG.map(t => t.examples.join("; ")).join("; ") + ". The AI calls tools and checks their results; you do not need these exact sentences.",
+        "[Natural-language tools] " + TOOL_CATALOG.map(t => t.examples.join("; ")).join("; ") + ". No exact wording is required; work and memory changes are confirmed from actual tool results.",
         "[Chat preferences] " + SOCIAL.join("; ") + ". Private messages and public username mentions still require replies.",
         `Other than immediate controls and current-location saves, these are AI-interpreted request examples, not rigid commands. For a required reply, use /msg ${username} <request> or mention ${username} publicly. Work is queued and attempted; materials, visible targets and reachable locations are needed. Building needs size/materials/location (up to 128 blocks per batch); movement stays in the current dimension. Named projects persist versions/progress (up to 4096 cells, 64x64 across), preserve conflicting player edits, and support axis/slab/furnace-chest facing states.`,
     ].join("\n");
