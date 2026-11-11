@@ -503,6 +503,11 @@ app.post("/tasks", async (req, res) => {
         const body = req.body;
         let result;
         switch (body.operation || "snapshot") {
+            case "project":
+                result = !["status", "list"].includes(body.action) && body.expectedRevision != null && body.expectedRevision !== controller.revision && !Object.hasOwn(controller.controlReceipts, body.key)
+                    ? { ok: false, message: "Work changed while I was thinking. Please repeat the project request." }
+                    : controller.projectManager.request(body);
+                break;
             case "resolve":
                 result = resolveWorldTarget(bot, body.reference, body);
                 break;

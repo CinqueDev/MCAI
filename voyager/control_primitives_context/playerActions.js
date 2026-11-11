@@ -38,3 +38,13 @@ async function followPlayer(bot, username, distance = 2) {}
 // Hold the bot's current position, or resolve the supplied reference and hold there.
 // For the requesting player's position: {type:'current_location'}.
 async function stayAt(bot, reference = null) {}
+
+// Exact edits affect ONLY the requested integer cell. Never substitute mineBlock's nearby search.
+// Removal verifies air and requires reach and an appropriate harvesting tool.
+async function removeBlockAt(bot, position, expected = null) {}
+// Replacement requires an explicitly expected original block and available replacement item.
+// It reports partial removal if placement fails; do not blindly retry an uncertain replacement.
+async function replaceBlockAt(bot, position, expected, name, state = {}) {}
+// Saved projects run automatically in bounded batches; no critic may mark a partial batch complete.
+// Requires that project's current task/version lease. Reconciles live blocks and preserves conflicts.
+async function buildProjectBatch(bot, projectId, limit = 128) {}

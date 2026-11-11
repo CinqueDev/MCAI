@@ -344,5 +344,451 @@
       "resume following",
       "stay at home"
     ]
+  },
+  {
+    "name": "create_project",
+    "description": "Save a named, durable blueprint and normally queue construction. Ask for missing location/size/materials first. Cells are integer offsets relative to origin; specify ALL affected cells (1-4096 within 64x64 horizontal bounds). Actions default to place; remove/replace require expected original names AND explicit player permission for those exact changes. Never clear surrounding structures. Single-cell blocks only (no doors, beds or tall plants). Supported states: axis, single slab type top/bottom, furnace/chest facing. dependsOn lists relative positions of supports/earlier cells. execute=false is for requests to plan without building.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "player",
+                "current_location",
+                "behind_player",
+                "looked_block",
+                "beside_block",
+                "coordinates",
+                "block",
+                "entity",
+                "landmark"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "description": "Player username, landmark name, or entity type. Omit player name for the requester."
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "dimension": {
+              "type": "string"
+            },
+            "block": {
+              "type": "string"
+            },
+            "entityId": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "blocks": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "properties": {
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              },
+              "name": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "place",
+                  "remove",
+                  "replace"
+                ]
+              },
+              "expected": {
+                "type": "string"
+              },
+              "state": {
+                "type": "object",
+                "properties": {
+                  "axis": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "facing": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "dependsOn": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "integer"
+                    },
+                    "y": {
+                      "type": "integer"
+                    },
+                    "z": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": [
+              "position"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "execute": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "origin",
+        "blocks"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "build and remember a project named garden wall",
+      "plan a small stone hut here without building it yet"
+    ]
+  },
+  {
+    "name": "revise_project",
+    "description": "Save a new version of an existing project from an explicit revision request. Supply the full revised blueprint with relative offsets. Pause active construction and let the current operation settle before revising. Unchanged verified cells retain their receipts; changed cells require rechecking. A revision never automatically removes retired cells. To repair a conflicting player edit, explicitly specify replace and its expected block.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "player",
+                "current_location",
+                "behind_player",
+                "looked_block",
+                "beside_block",
+                "coordinates",
+                "block",
+                "entity",
+                "landmark"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "description": "Player username, landmark name, or entity type. Omit player name for the requester."
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "dimension": {
+              "type": "string"
+            },
+            "block": {
+              "type": "string"
+            },
+            "entityId": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "blocks": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "properties": {
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              },
+              "name": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "place",
+                  "remove",
+                  "replace"
+                ]
+              },
+              "expected": {
+                "type": "string"
+              },
+              "state": {
+                "type": "object",
+                "properties": {
+                  "axis": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "facing": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "dependsOn": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "integer"
+                    },
+                    "y": {
+                      "type": "integer"
+                    },
+                    "z": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 32
+              }
+            },
+            "required": [
+              "position"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "execute": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "identifier",
+        "origin",
+        "blocks"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "change the paused garden wall blueprint to use oak logs"
+    ]
+  },
+  {
+    "name": "continue_project",
+    "description": "Continue an existing named project from saved blueprint and verified progress. Reconcile the world first; changed cells produce conflicts and are preserved. Queue execution; do not say building is already finished.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "identifier": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "continue the house"
+    ]
+  },
+  {
+    "name": "project_status",
+    "description": "Read a scoped project by ID/name, or list visible projects if identifier is omitted. Reports version, bounds, verified/last-seen progress, missing resources and conflicts. Unknown chunks do not establish that a build is intact.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "identifier": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "examples": [
+      "what materials are missing for the house?",
+      "show my building projects"
+    ]
+  },
+  {
+    "name": "project_supplies",
+    "description": "Queue a bounded material subtask (up to 64 of each item, 128 items total), then continue the project only if that subtask succeeds. Optionally use an explicitly authorized storage reference; otherwise gather/craft. Respect ownership and access notes. Uses existing/learned item workflows; no new Phase 4 container guarantees.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "player",
+                "current_location",
+                "behind_player",
+                "looked_block",
+                "beside_block",
+                "coordinates",
+                "block",
+                "entity",
+                "landmark"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "description": "Player username, landmark name, or entity type. Omit player name for the requester."
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "dimension": {
+              "type": "string"
+            },
+            "block": {
+              "type": "string"
+            },
+            "entityId": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "identifier"
+      ],
+      "additionalProperties": false
+    },
+    "examples": [
+      "gather the next batch of missing materials for the house",
+      "use our materials chest to restock the wall project"
+    ]
   }
 ]

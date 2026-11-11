@@ -352,6 +352,9 @@ Chat requests now have explicit action helpers:
 | “Give Alice a pickaxe” | `giveItemToPlayer(bot, username, name, count)` | Approach, face the player, and drop the item nearby. |
 | “Place a crafting table here” | `placeItem(bot, name, position)` | Place at an exact integer coordinate, then verify the world block. |
 | “Build a wall here” | `buildStructure(bot, blocks)` | Execute an explicit supported blueprint, up to 128 blocks per batch. |
+| “Break only that beehive” | `removeBlockAt(bot, position, expected)` | Remove the exact resolved cell with tool/reach/result checks. |
+| “Replace this dirt with stone” | `replaceBlockAt(bot, position, expected, name, state)` | Replace only the specified cell and report partial results. |
+| “Continue the house project” | `buildProjectBatch(bot, projectId, limit)` | Reconcile saved progress and execute a bounded batch of its approved plan. |
 
 The social agent and action planner receive current visible player coordinates,
 dimension, and inventory. Players outside loaded chunks have unknown locations;
@@ -361,7 +364,7 @@ Walking to players does not dig through buildings or place temporary scaffolding
 paths have bounded timeouts and failures are reported. Giving verifies the drop,
 not that the intended player picked it up. Building requires real inventory items,
 solid supports and empty target cells; it can resume by skipping matching blocks.
-Block orientation/state-specific blueprints are not supported by this helper yet.
+Blueprints can specify the limited verified states described below.
 
 Persistent follow/stay modes use the durable task controller's movement lease.
 Foreground player work has priority over these modes; autonomous curriculum waits.
@@ -379,6 +382,47 @@ head direction and eye height and uses a bounded 6-block raycast through loaded
 chunks. Ambiguous entities/landmarks, stale memory, unknown dimensions and
 cross-dimension targets require clarification. Native target tools and generated
 actions receive only memory visible in their original public/private scope.
+
+Named projects now support durable exact-cell builds and edits. Ask in ordinary
+language to create a named wall/house, continue it, check missing materials, revise
+its paused blueprint, or gather the next batch of supplies. The model uses
+`create_project`, `revise_project`, `continue_project`, `project_status` and
+`project_supplies`; no specific chat phrase is required. A build request can save
+and queue its concrete plan in one operation. Requests to plan without building
+use `execute=false`. Bounds, location and materials must be clear before queuing.
+
+Project blueprints contain explicit cells relative to a resolved origin, with
+optional support dependencies and explicit expected-block removals/replacements.
+The journal retains up to eight blueprint versions and verified per-cell progress
+under the original world and public/private scope. Limits are 4096 cells and a
+64-by-64 horizontal footprint, within build height. Construction runs in cancellable
+batches of at most 128 cells. Saved project state is not stored as an executable
+skill, and a critic cannot declare a partial batch to be a completed build.
+
+`removeBlockAt(bot, position, expected)` digs only the exact requested cell with
+reach/tool checks and verifies its removal. `replaceBlockAt(bot, position,
+expected, name, state)` checks replacement inventory before digging and reports a
+partial failure if placement fails. Supported placement states are axis, single
+slab top/bottom, and horizontal furnace/chest facing. Arbitrary stair/redstone
+states and multi-cell project doors/beds/tall plants are unsupported. Default
+placements still verify the resulting block. No teleporting, material grants,
+implicit clearing, or automatic deletion of retired blueprint cells is used.
+
+Resume/rejoin rechecks saved cells. Already matching blocks consume no further
+items; player changes to verified cells and uncertain absent placements stop the
+project with a conflict. The bot preserves those edits. An explicit revised
+blueprint can authorize a replacement for a particular conflicting cell; pause
+active construction and let its current block operation settle before revising.
+A plan-only revision cancels unfinished execution without undoing completed blocks.
+
+Material queries show totals and current shortages. A restocking request queues
+at most 64 of each item and 128 items total, followed by construction dependent on
+successful supplies. A failed supply task blocks its dependent build; an explicit
+continue request can retry construction with newly obtained inventory. Existing
+or learned gathering/crafting/container workflows perform supply tasks. Phase 4
+container/interaction hardening was deferred to agent learning, not implemented
+as part of these project tools. Private project plans stay private. World memory
+mirrors project summaries and labels unbuilt plans separately from verified builds.
 
 Each helper records structured action evidence for the planner and task critic, so
 successful interactions can be checked against the requested coordinates, player,

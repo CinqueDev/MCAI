@@ -293,10 +293,32 @@ class Voyager:
                     "state": record["state"] if record else "cancelled", "interrupted": True}
         self.active_task = record
         self.env.execution = {"id": record["id"], "generation": record["generation"]}
+        if record["generation"] != active.get("generation"):
+            return {"task": self.task, "success": False, "controlled": True, "state": record["state"], "interrupted": True}
         if record.get("movement"):
             return {"task": self.task, "success": False, "controlled": True, "persistent": True,
                     "state": record["state"], "interrupted": True}
         return None
+
+    def _step_project(self):
+        """Execute a saved blueprint in bounded batches; world receipts decide success."""
+        identifier = self.active_task["projectId"]
+        events = self.env.step(f"await buildProjectBatch(bot, {json.dumps(identifier)}, 128);",
+                               programs=self.skill_manager.programs)
+        self.recorder.record(events, self.task)
+        self.last_events = copy.deepcopy(events)
+        controlled = self._control_result()
+        if controlled:
+            return self.messages, 0, False, controlled
+        results = events[-1][1]["status"].get("actionResults", [])
+        result = next((r for r in reversed(results) if r.get("type") == "project_batch" and
+                       r.get("project", {}).get("id") == identifier), None)
+        state = result["project"]["state"] if result else "blocked"
+        reason = result.get("reason", "") if result else "; ".join(str(e.get("onError", "")) for _, e in events if e.get("onError"))
+        info = {"task": self.task, "project": True, "success": state == "completed" and bool(result.get("verified")),
+                "critique": reason or "No verified project batch receipt was returned.", "conversations": self.conversations}
+        self.action_agent_rollout_num_iter += 1
+        return self.messages, 0, state != "building", info
 
     def step(self):
         if self.action_agent_rollout_num_iter < 0:
@@ -304,6 +326,8 @@ class Voyager:
         controlled = self._control_result()
         if controlled:
             return self.messages, 0, False, controlled
+        if getattr(self, "active_task", None) and self.active_task.get("projectId"):
+            return self._step_project()
         ai_message = self.action_agent.llm(self.messages)
         controlled = self._control_result()
         if controlled:
@@ -427,7 +451,10 @@ class Voyager:
                 continue
             if done:
                 break
-            if not self.env.player_request and self.conversation.has_tasks():
+            current = getattr(self, "active_task", None) or {}
+            pending = self.conversation.has_tasks(minimum_priority=current.get("priority", 100)) if current.get("projectId") else (
+                not self.env.player_request and self.conversation.has_tasks())
+            if pending:
                 info["interrupted"] = True
                 break
         if controller:
@@ -571,7 +598,7 @@ class Voyager:
                     self.conversation.report_task(request, info["success"], info["critique"])
                 else:
                     self.conversation.report_task(request, info["success"])
-            if info["success"] and not self.env.task_recipient:
+            if info["success"] and not self.env.task_recipient and not info.get("project"):
                 self.skill_manager.add_new_skill(info)
 
             if not info.get("interrupted") and not self.env.task_recipient:

@@ -74,7 +74,10 @@ class TaskClient:
         return self.call("planning", value=bool(value))
 
     def queued(self):
-        return [t for t in self.snapshot()["tasks"] if t["state"] == "queued"]
+        tasks = self.snapshot()["tasks"]
+        states = {task["id"]: task["state"] for task in tasks}
+        return [{**task, "dependencyState": states.get(task["dependsOnTask"])} if task.get("dependsOnTask") else task
+                for task in tasks if task["state"] == "queued"]
 
     def wait_ready(self):
         recovered = False

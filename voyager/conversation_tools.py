@@ -11,9 +11,16 @@ API_TOOLS = [{"type": "function", "function": {k: entry[k] for k in ("name", "de
 def validate(schema, value):
     kind = schema.get("type")
     valid = {"object": lambda: isinstance(value, dict), "string": lambda: isinstance(value, str) and len(value) <= 4000,
-             "number": lambda: type(value) in (int, float) and math.isfinite(value)}
+             "number": lambda: type(value) in (int, float) and math.isfinite(value),
+             "integer": lambda: type(value) is int, "boolean": lambda: type(value) is bool,
+             "array": lambda: isinstance(value, list)}
     if kind in valid and not valid[kind]():
         raise ValueError(f"Expected {kind}")
+    if kind == "array":
+        if len(value) > schema.get("maxItems", 4096):
+            raise ValueError("Too many tool argument items")
+        for item in value:
+            validate(schema["items"], item)
     if "enum" in schema and value not in schema["enum"]:
         raise ValueError("Unsupported tool argument")
     if kind == "object":
@@ -37,7 +44,7 @@ class ConversationTools:
 
     def execute(self, name, arguments):
         entry = next((e for e in CATALOG if e["name"] == name), None)
-        mutating = name in ("control_task", "queue_task", "remember_location", "update_memory", "set_movement")
+        mutating = name in ("control_task", "queue_task", "remember_location", "update_memory", "set_movement", "create_project", "revise_project", "continue_project", "project_supplies")
         try:
             if not entry:
                 raise ValueError("Unknown tool")
@@ -85,6 +92,29 @@ class ConversationTools:
             if not task:
                 raise ValueError("Work changed while I was thinking. Please repeat the request")
             return {"ok": True, "id": task["id"], "message": f"Queued {task['id'][:8]}: {task['task']}. It will be attempted after the current action."}
+        if name in ("create_project", "revise_project", "continue_project", "project_status", "project_supplies"):
+            if not worker.task_client:
+                raise ValueError("Persistent projects are unavailable")
+            reference = arguments.get("origin") or arguments.get("source")
+            if reference and reference.get("position") and reference.get("type") in ("coordinates", "block", "beside_block"):
+                proposed = [reference["position"][axis] for axis in ("x", "y", "z")]
+                numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", source["text"])]
+                explicit = any(proposed == numbers[i:i + 3] for i in range(max(0, len(numbers) - 2)))
+                resolved = any(r["result"].get("status") == "resolved" and r["result"].get("position") == reference["position"] for r in self.receipts)
+                if not explicit and not resolved:
+                    raise ValueError("Provide a project origin or use a player/pointed/remembered reference; I won't guess coordinates")
+            action = {"create_project": "create", "revise_project": "revise", "continue_project": "continue",
+                      "project_status": "status" if arguments.get("identifier") else "list", "project_supplies": "supplies"}[name]
+            memories = worker.world_memory.context((reference or {}).get("name") or "", actor=memory_actor,
+                kinds=["place", "storage", "ownership"], limit=50) if worker.world_memory else []
+            result = worker.task_client.call("project", action=action, **arguments, requester=actor,
+                recipient=actor if private else None, memories=memories, requesterLocation=source.get("requesterLocation"),
+                requesterDimension=source.get("requesterDimension"), userText=source["text"],
+                expectedRevision=self.revision, key=event + ':project' if name != "project_status" else None)
+            if worker.world_memory:
+                for project in ([result["project"]] if result.get("project") else result.get("projects", [])):
+                    worker.world_memory.ingest_project(project)
+            return result
         if name in ("resolve_target", "set_movement"):
             if not worker.task_client:
                 raise ValueError("World-reference tools are unavailable")

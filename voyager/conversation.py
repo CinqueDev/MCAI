@@ -61,6 +61,14 @@ clarifications, not guessed coordinates. Use set_movement for continuous follow,
 stay, stop following and resume following; do not replace following with a single
 visit or queue an endless generated loop. A follow/stay mode yields to foreground
 requests and resumes afterward; low health pauses it for safety.
+For named builds use create_project with a complete blueprint, an explicit origin,
+materials, and bounds implied by the exact cells. Ask for missing specifications.
+Use execute=false only when the player asks for a plan rather than construction.
+Use project_status for progress/missing materials, continue_project to resume,
+revise_project for an explicitly changed blueprint, and project_supplies for bounded
+restocking. Do not infer permission to demolish occupied cells from a vague build
+request. Removing/replacing needs exact positions and explicit expected blocks.
+Existing container operations may be learned; do not claim Phase 4 reliability.
 Tasks are queued at safe action boundaries; never claim
 you already performed them. Respect personal chests/builds and ask before altering them.
 If can_queue_task is false, explain that the queue is full and leave task null.
@@ -324,7 +332,7 @@ class ConversationWorker:
                 "planning": control.get("planning", False),
                 "active": ({"state": active["state"], "task": active["task"] if visible(active) else "Private task",
                             "needs_review": bool(active.get("needsReview")), "recovered": bool(active.get("recovery"))} if active else None),
-                "queued": [{"task": task["task"], "state": task["state"]} for task in control["tasks"] if task["state"] == "queued" and visible(task)]}
+                "queued": [{"task": task["task"], "state": task["state"], "waiting_on": task.get("dependsOnTask")} for task in control["tasks"] if task["state"] == "queued" and visible(task)]}
             context["queued_tasks"] = [task["task"] for task in context["execution"]["queued"]]
             context["task"] = context["execution"]["active"]["task"] if active else None
         memory_policy = ""
@@ -468,9 +476,10 @@ class ConversationWorker:
     def queue_full(self):
         return len(self.queued_tasks()) >= 20
 
-    def has_tasks(self):
+    def has_tasks(self, minimum_priority=1):
         queued = self.queued_tasks()
-        return any(t.get("requester") or t.get("priority", 100) > 0 for t in queued) if self.task_client else bool(queued)
+        return any(t.get("priority", 100) >= minimum_priority and
+                   (not t.get("dependsOnTask") or t.get("dependencyState") == "completed") for t in queued)
 
     def pop_task(self):
         if self.task_client:

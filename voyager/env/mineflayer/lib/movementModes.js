@@ -109,7 +109,7 @@ class MovementModes {
         if (!this.ready || this.running || controller.disconnected || controller.suspended || controller.lease || controller.cleanupCount) return;
         let record = controller.active();
         if (!record) {
-            const next = controller.records.filter(t => t.state === 'queued').sort((a, b) => b.priority - a.priority)[0];
+            const next = controller.records.filter(t => t.state === 'queued' && (!t.dependsOnTask || controller.get(t.dependsOnTask)?.state === 'completed')).sort((a, b) => b.priority - a.priority)[0];
             if (!next?.movement) return;
             record = controller.claim(next.id);
         }

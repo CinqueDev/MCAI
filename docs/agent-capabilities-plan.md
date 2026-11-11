@@ -1,6 +1,6 @@
 # Cooperative agent and world memory plan
 
-Status: Phases 1–3 (task control, shared world memory, world references/following/staying) are implemented with simulated validation; live Minecraft validation remains pending. Phases 4–6 remain planned. Native conversation tools now execute task/memory/reference/movement requests rather than relying on required sentences. Safe interrupted work recovers automatically on reconnect; explicit halts and uncertain inventory operations remain paused.
+Status: Phases 1–3 and 5 are implemented with simulated validation; live Minecraft validation remains pending. Phase 4 is deliberately deferred to agent learning, per the user's decision. Phase 6 remains planned. Existing container APIs/primitives remain available for learned workflows; no new Phase 4 reliability guarantees were added. Native conversation tools execute task/memory/reference/movement/project requests rather than requiring exact sentences. Safe interrupted work recovers automatically on reconnect; explicit halts and uncertain inventory operations remain paused.
 
 ## Objective
 
@@ -89,7 +89,12 @@ Implemented Phase 3 details:
   Python hands persistent modes back to the bridge rather than asking the critic
   to finish a continuous task. `cmds` includes the new capabilities.
 
-## Phase 4 — Inspection, containers, and object interaction
+## Phase 4 — Inspection, containers, and object interaction (deferred)
+
+The user chose to let the agent learn these workflows using existing APIs and
+skills instead of implementing this phase now. The items below remain potential
+hardening work; they are not prerequisites for Phase 5 and are not verified as
+learned capabilities.
 
 - Add verified inspection of blocks, block states, visible entities, the bot's inventory, and supported containers.
 - Make inspection results available to chat as well as the planner, preserving the requesting channel.
@@ -114,6 +119,40 @@ Acceptance: named-storage requests transfer the requested amounts, stale/missing
 - Keep work in cancellable batches and record partial completion. Larger builds must not depend on one long generated script.
 
 Acceptance: a build can stop halfway, survive restart, and resume without duplicating materials or destroying a player's intervening edits; a requested replacement affects only its specified cells.
+
+Implemented Phase 5 details:
+
+- `removeBlockAt` targets one integer coordinate with expected-block, reach,
+  harvesting-tool and post-dig checks. `replaceBlockAt` requires replacement
+  inventory before removal and reports partial failure rather than pretending an
+  unsuccessful replacement completed. Neither searches for a similar nearby block.
+- Placement verifies supported requested states: axis, single slab top/bottom,
+  and horizontal furnace/chest facing. Unsupported states and multi-cell project
+  blocks (doors/beds/tall plants) are rejected; mismatched placed blocks are
+  preserved for review. General stairs, redstone states and arbitrary rotations
+  are not implemented.
+- Native project tools create/revise/continue/status/restock named projects. A
+  concrete build request authorizes its exact blueprint; `execute=false` saves a
+  plan without queuing construction. Missing specifications still require a
+  clarification. Revisions need the active block operation to have settled.
+- Projects store requester/channel, approved request, exact bounds, up to eight
+  blueprint versions, support dependencies, material totals, per-cell intent and
+  verified progress in the same world-scoped task journal. Maximum: 4096 cells in
+  a 64-by-64 horizontal footprint, within dimension build height.
+- Python executes the saved blueprint in batches of up to 128 cells, using
+  authoritative world receipts rather than an LLM/critic completion guess. It
+  yields at batch boundaries to other runnable requests. No implicit clearing or
+  automatic removal of cells retired by a revision occurs.
+- Resume/reconnect reconciles the world with saved receipts. A changed verified
+  cell or an uncertain absent placement produces a conflict; player edits remain.
+  Explicit revised expected-block replacements can repair selected conflicts.
+- Missing-resource queries compare remaining cells with real inventory. Explicit
+  restocking requests queue bounded gathering/crafting or authorized storage work
+  (64 per item, 128 total) and a dependent build task. Failed supplies do not start
+  the build. Storage work uses existing/learned helpers, with Phase 4 still deferred.
+- SQLite mirrors scoped project summaries, distinguishing approved plans from
+  fully verified completed builds. Executable skills remain separate from named
+  project state. `cmds` lists the new tools and edit primitives.
 
 ## Phase 6 — Player assistance and defense
 
@@ -140,4 +179,4 @@ Complete a live Minecraft scenario before treating the overall feature set as ve
 7. Repeat with private requests and a different world to verify visibility and isolation.
 8. Ask for protection, exercise pursuit limits, and stop the mode.
 
-Recommended order: task control → shared memory → target resolution/following → inspection/storage/interactions → editing/projects → defense → final combined gameplay validation. Existing in-progress helper work remains the baseline; these phases extend it rather than replacing it.
+Current order: task control → shared memory → target resolution/following → editing/projects (Phase 5) → defense (Phase 6) → combined gameplay validation. Phase 4 inspection/storage/interactions is deferred to learned workflows; revisit its hardening only if needed. Existing helpers remain the baseline.

@@ -1,3 +1,5 @@
+const { Projects } = require("./projects");
+const blockStates = require("./blockStates");
 const { MovementModes } = require("./movementModes");
 const { resolveWorldTarget } = require("./targetResolver");
 const { CONTROLS, renderCommandHelp } = require("./commandCatalog");
@@ -25,6 +27,7 @@ class TaskController {
         this.cleanupCount = 0;
         this.revision = 0;
         this.records = [];
+        this.projects = [];
         this.controlReceipts = Object.create(null);
         this.controlInFlight = new Map();
         this.disconnected = false;
@@ -37,6 +40,7 @@ class TaskController {
             if (data.version !== 1 || !Array.isArray(data.tasks))
                 throw new Error("Unsupported task journal");
             this.records = data.tasks;
+            this.projects = data.projects || [];
             this.controlReceipts = Object.assign(Object.create(null), data.controlReceipts || {});
             this.suspensionReason = data.suspensionReason || null;
             this.revision = (data.revision || 0) + 1;
@@ -68,6 +72,7 @@ class TaskController {
             this.lease?.abort.abort();
         });
         this.movementModes = new MovementModes(this);
+        this.projectManager = new Projects(this);
         this.save();
     }
 
@@ -87,6 +92,7 @@ class TaskController {
                     controlReceipts: this.controlReceipts,
                     observationRecipient: this.observationRecipient,
                     tasks: this.records,
+                    projects: this.projects,
                 },
                 null,
                 2
@@ -171,9 +177,9 @@ class TaskController {
         const record = id
             ? this.get(id)
             : this.records
-                  .filter((t) => t.state === "queued")
-                  .sort((a, b) => b.priority - a.priority)[0];
-        if (!record || record.state !== "queued") return null;
+                  .filter((t) => t.state === "queued" && (!t.dependsOnTask || this.get(t.dependsOnTask)?.state === "completed"))
+                  .sort((a, b) => b.priority - a.priority || a.updated.localeCompare(b.updated))[0];
+        if (!record || record.state !== "queued" || (record.dependsOnTask && this.get(record.dependsOnTask)?.state !== "completed")) return null;
         record.state = "running";
         this.revision++;
         this.planning = false;
@@ -191,6 +197,10 @@ class TaskController {
             record.generation !== generation
         )
             return false;
+        if (success && record.projectId) {
+            const project = this.projects.find(p => p.id === record.projectId);
+            if (project?.status !== "completed" || record.projectVersion !== project.versions.at(-1).version) return false;
+        }
         record.state = success ? "completed" : "failed";
         this.revision++;
         record.reason = reason;
@@ -209,6 +219,7 @@ class TaskController {
             return false;
         record.state = "queued";
         record.generation++;
+        record.updated = new Date().toISOString();
         this.save();
         return true;
     }
@@ -326,7 +337,7 @@ class TaskController {
                                       t.actions.filter(
                                           (a) => a.state === "completed"
                                       ).length
-                                  } action batches)`
+                                  } action batches)${t.dependsOnTask && this.get(t.dependsOnTask)?.state !== "completed" ? `; waiting for supplies task ${t.dependsOnTask.slice(0, 8)} (${this.get(t.dependsOnTask)?.state || "missing"})` : ""}`
                           )
                           .join("; ")
                     : this.suspended
@@ -484,6 +495,7 @@ class TaskController {
             irreversible ||
             [
                 "placeBlock",
+                "_placeBlockWithOptions",
                 "dig",
                 "craft",
                 "equip",
@@ -607,6 +619,8 @@ class TaskController {
     install() {
         const bot = this.bot;
         bot.movementModes = this.movementModes;
+        bot.projectManager = this.projectManager;
+        bot.blockStates = blockStates;
         bot.resolveTarget = reference => {
             const lease = this.context.getStore();
             const task = lease?.taskId && this.get(lease.taskId);
@@ -640,6 +654,7 @@ class TaskController {
         for (const name of [
             "dig",
             "placeBlock",
+            "_placeBlockWithOptions",
             "craft",
             "equip",
             "consume",

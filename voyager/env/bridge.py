@@ -198,7 +198,7 @@ class VoyagerEnv(gym.Env):
         }
         if self.world_memory:
             data["worldMemory"] = self.world_memory.context(self.current_task or "", actor=self.task_recipient,
-                kinds=["place", "resource", "storage", "project"], limit=50)
+                kinds=["place", "resource", "storage", "project", "ownership"], limit=50)
         res = requests.post(
             f"{self.server}/step", json=data, timeout=self.request_timeout
         )

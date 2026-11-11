@@ -483,11 +483,31 @@ class WorldMemory:
         for task in tasks:
             self._ingest_task(task, (snapshot.get("state") or {}).get("dimension") or snapshot.get("dimension"))
 
+    def ingest_project(self, project):
+        """Mirror an authorized journal summary; planned cells are not observations."""
+        event = "project:" + project["id"] + ":" + hashlib.sha256(json.dumps(project, sort_keys=True).encode()).hexdigest()
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM seen_events WHERE world=? AND event_id=?", (self.world, event)).fetchone():
+                return
+        data = {**project, "plan_basis": "player-approved blueprint", "progress_basis": "verified block states"}
+        verified = project.get("state") == "completed" and not project.get("unverified") and not project.get("conflictCount")
+        self.put(kind="project", key="project:" + project["id"], name=project["name"], data=data,
+                 dimension=project.get("dimension"), actor=project.get("recipient"),
+                 source="observed" if verified else "reported", observed_at=project.get("lastVerified") or self.clock(),
+                 evidence={"project_id": project["id"], "version": project["version"], "event": event})
+        with self.lock, self.db:
+            self.db.execute("INSERT OR IGNORE INTO seen_events VALUES(?,?)", (self.world, event))
+
     def _ingest_task(self, task, dimension):
         dimensions = {a["dimension"] for a in task.get("actions", []) if a.get("dimension")}
         dimension = next(iter(dimensions)) if len(dimensions) == 1 else None
         results = [result for action in task.get("actions", []) for result in action.get("results", []) if result.get("verified")]
         builds = [result for result in results if result.get("type") in ("build", "place")]
+        project = task.get("projectProgress")
+        if project:
+            if not project.get("task_id") or project["task_id"] == task["id"]:
+                self.ingest_project({**project, "task_id": task["id"], "task_state": task.get("state"), "recipient": task.get("recipient")})
+            return
         if not builds and task.get("state") not in ("completed", "failed"):
             return
         digest = hashlib.sha256(json.dumps([task.get("state"), results, task.get("updated")], sort_keys=True).encode()).hexdigest()

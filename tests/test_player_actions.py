@@ -36,7 +36,7 @@ class PlayerActionIntegrationTests(unittest.TestCase):
         action.llm = Mock(model_name="deepseek-flash")
         system = action.render_system_message().content
         runtime = "\n".join(load_control_primitives())
-        for name in ["moveToPlayer", "moveToPosition", "dropItem", "giveItemToPlayer", "placeItem", "buildStructure", "waitForItem"]:
+        for name in ["moveToPlayer", "moveToPosition", "dropItem", "giveItemToPlayer", "placeItem", "buildStructure", "waitForItem", "removeBlockAt", "replaceBlockAt", "buildProjectBatch"]:
             self.assertIn(f"async function {name}(", system)
             self.assertIn(f"async function {name}(", runtime)
 
