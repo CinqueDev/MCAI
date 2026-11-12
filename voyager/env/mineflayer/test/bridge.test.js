@@ -349,9 +349,12 @@ test('disconnect replies promptly during an unsettled atomic action and recovery
     routes['/start']({body:{port:25565,taskJournalPath:journalPath}},response());
     await spawn(1);
     const recovered = bots[1].tasks.get(task.id);
-    assert.equal(recovered.state,'paused');
-    assert.equal(recovered.needsReview,true);
+    assert.equal(recovered.state,'queued');
+    assert.equal(recovered.needsReview,false);
+    assert.equal(bots[1].tasks.suspended,false);
+    assert.equal(recovered.recoveryEvidence[0].outcome,'unknown');
+    assert.throws(() => require('../lib/itemRecovery').guard(recovered, 'transfer', []), /unknown outcome/);
     settleAtomic();
     await step;
-    assert.equal(bots[1].tasks.get(task.id).state,'paused');
+    assert.equal(bots[1].tasks.get(task.id).state,'queued');
 });

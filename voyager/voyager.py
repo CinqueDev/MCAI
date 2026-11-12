@@ -12,7 +12,7 @@ import voyager.utils as U
 from .env import VoyagerEnv
 from .conversation import ConversationWorker
 from .world_memory import WorldMemory
-from .tasks import MinecraftConnectionLost
+from .tasks import MinecraftConnectionLost, recovery_context
 from .llm import DEFAULT_MODEL, resolve_api_key
 
 from .agents import ActionAgent
@@ -439,7 +439,7 @@ class Voyager:
                 return self.messages, 0, False, {"task": task, "success": False, "interrupted": True}
             self.active_task = record
             self.env.execution = {"id": record["id"], "generation": record["generation"]}
-        self.reset(task=task, context=context, reset_env=reset_env)
+        self.reset(task=task, context=context + (recovery_context(record) if controller else ""), reset_env=reset_env)
         while True:
             messages, reward, done, info = self.step()
             if info.get("controlled"):
@@ -451,7 +451,7 @@ class Voyager:
                     break
                 self.active_task = record
                 self.env.execution = {"id": record["id"], "generation": record["generation"]}
-                self.reset(task=task, context=context + " Recheck prior action receipts and the live world before continuing. Never repeat an uncertain item operation.", reset_env=False)
+                self.reset(task=task, context=context + recovery_context(record) + " Recheck prior action receipts and the live world before continuing. Never repeat an uncertain item operation.", reset_env=False)
                 continue
             if done:
                 break

@@ -43,6 +43,21 @@ class TaskControlTests(unittest.TestCase):
         self.assertEqual(voyager.task_controller.complete.call_args.args[0]["generation"], 3)
         self.assertIsNone(voyager.env.execution)
 
+    def test_recovered_item_receipts_reach_fresh_action_planning(self):
+        voyager = Voyager.__new__(Voyager)
+        voyager.task_controller = Mock()
+        evidence = [{"name": "toss", "remaining": 2, "changed": 3, "outcome": "inventory_change_observed"}]
+        voyager.task_controller.begin.return_value = dict(id="task-1", generation=2, state="running", recoveryEvidence=evidence)
+        voyager.task_controller.complete.return_value = True
+        voyager.env = Mock(player_request=True)
+        voyager.reset = Mock()
+        voyager.step = Mock(return_value=([], 0, True, dict(success=False, critique="Unverified delivery")))
+        voyager.rollout(task="Give Alice 5 iron", context="Original request")
+        context = voyager.reset.call_args.kwargs["context"]
+        self.assertIn('"remaining": 2', context)
+        self.assertIn("not proof of delivery", context)
+        self.assertIn("ORIGINAL goal", context)
+
     def test_cancelled_rollout_does_not_report_completion_or_resume(self):
         voyager = Voyager.__new__(Voyager)
         voyager.task_controller = Mock()

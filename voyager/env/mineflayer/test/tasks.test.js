@@ -180,7 +180,7 @@ test("atomic item operations settle before stopping and later operations are blo
     controller.finishAction(lease, []);
 });
 
-test("interrupted inventory operations require review rather than being replayed", async () => {
+test("interrupted inventory operations reconcile automatically without a global halt", async () => {
     const { controller } = fixture();
     const task = start(controller);
     const lease = begin(controller, task);
@@ -198,10 +198,13 @@ test("interrupted inventory operations require review rather than being replayed
     assert.equal(task.needsReview, true);
     assert.equal(task.state, "paused");
     controller.finishAction(lease, []);
-    assert.match(
-        await controller.control("resume", "Alice"),
-        /inventory review/
-    );
+    assert.equal(task.needsReview, false);
+    assert.equal(task.state, "queued");
+    assert.equal(controller.suspended, false);
+    const resumed = controller.claim(task.id);
+    const retry = begin(controller, resumed);
+    await assert.rejects(controller.context.run(retry, () => controller.operation("withdraw", async () => {}, true)), /unknown outcome/);
+    controller.finishAction(retry, []);
 });
 
 test("journal automatically requeues safe work with progress after process restart", () => {
@@ -394,7 +397,7 @@ test('named controls clarify ambiguity and cannot select another player or expos
     }
 });
 
-test('rejoining preserves manual pauses but only blocks automatic recovery for uncertain item operations', async () => {
+test('rejoining preserves only manual pauses and migrates uncertain operations to recovery evidence', async () => {
     for (const kind of ['manual', 'transfer', 'safe']) {
         const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcai-rejoin-'));
         try {
@@ -409,11 +412,11 @@ test('rejoining preserves manual pauses but only blocks automatic recovery for u
             }
             bot.emit('end');
             const recovered = fixture({ journalPath }).controller;
-            assert.equal(recovered.get(task.id).state, kind === 'safe' ? 'queued' : 'paused');
-            assert.equal(recovered.suspended, kind !== 'safe');
+            assert.equal(recovered.get(task.id).state, kind === 'manual' ? 'paused' : 'queued');
+            assert.equal(recovered.suspended, kind === 'manual');
             if (kind === 'transfer') {
-                assert.equal(recovered.get(task.id).needsReview, true);
-                assert.match(await recovered.control('resume', 'Alice'), /inventory review/);
+                assert.equal(recovered.get(task.id).needsReview, false);
+                assert.equal(recovered.get(task.id).recoveryEvidence[0].outcome, 'unknown');
             }
             // A callback from the disconnected generation cannot overwrite the new journal.
             controller.finishAction(lease, []);
@@ -459,4 +462,86 @@ test('uninterpreted player input blocks new autonomous actions and queue reports
     assert.match(status,/Interpreting/);
     const approach = controller.enqueue({task:'Approach Alice',requester:'Alice'});
     assert.equal(controller.claim().id,approach.id);
+});
+
+test('partial transfers expose remaining quantities, reject replay, and allow exactly the remainder', async () => {
+    const { bot, controller } = fixture();
+    let count = 10;
+    bot.inventory.items = () => [{ name: 'iron_ingot', type: 7, metadata: 0, count }];
+    const task = start(controller), lease = begin(controller, task);
+    await assert.rejects(controller.context.run(lease, () => controller.operation('toss', async () => {
+        count = 7; throw new Error('lost acknowledgement');
+    }, true, [7, 0, 5])));
+    controller.finishAction(lease, []);
+    assert.equal(task.state, 'queued');
+    assert.equal(controller.suspended, false);
+    assert.equal(task.recoveryEvidence[0].remaining, 2);
+    const next = begin(controller, controller.claim(task.id));
+    let calls = 0;
+    await assert.rejects(controller.context.run(next, () => controller.operation('toss', async () => calls++, true, [7, 0, 5])), /at most 2/);
+    assert.equal(calls, 0);
+    await controller.context.run(next, () => controller.operation('toss', async () => { calls++; count -= 2; }, true, [7, 0, 2]));
+    assert.equal(calls, 1);
+    assert.equal(count, 5);
+    await assert.rejects(controller.context.run(next, () => controller.operation('toss', async () => calls++, true, [7,0,5])), /at most 0/);
+    assert.equal(calls, 1);
+    controller.finishAction(next, []);
+});
+
+test('legacy review halts migrate once without overriding a manual pause', () => {
+    for (const reason of ['review', 'manual']) {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcai-review-'));
+        try {
+            const journalPath = path.join(directory, 'tasks.json');
+            const { controller } = fixture({ journalPath });
+            const task = start(controller);
+            task.state = 'paused'; task.needsReview = true; task.recovery = true;
+            task.actions = [{ state: 'interrupted', operations: [{ name:'deposit', irreversible:true, state:'uncertain' }] }];
+            controller.suspended = true; controller.suspendOwner = 'Alice'; controller.suspensionReason = reason;
+            controller.save();
+            const second = fixture({ journalPath }).controller;
+            assert.equal(second.suspended, reason === 'manual');
+            assert.equal(second.get(task.id).state, reason === 'manual' ? 'paused' : 'queued');
+            assert.equal(second.get(task.id).needsReview, false);
+            assert.equal(second.get(task.id).recoveryEvidence.length, 1);
+            const third = fixture({ journalPath }).controller;
+            assert.equal(third.get(task.id).recoveryEvidence.length, 1);
+            assert.equal(third.suspended, reason === 'manual');
+        } finally { fs.rmSync(directory, { recursive:true, force:true }); }
+    }
+});
+
+test('danger holds work until live health recovers without requiring resume', () => {
+    const { bot, controller } = fixture();
+    const task = start(controller);
+    task.state = 'paused'; controller.suspended = true; controller.suspensionReason = 'safety';
+    bot.entity = { isInLava:false }; bot.health = 5;
+    assert.equal(controller.snapshot().suspended, true);
+    bot.health = 10;
+    assert.equal(controller.snapshot().suspended, false);
+    assert.equal(task.state, 'queued');
+});
+
+test('late uncertain callback never resurrects a cancelled task', async () => {
+    const { controller } = fixture();
+    const task = start(controller), lease = begin(controller, task);
+    let reject;
+    const pending = controller.context.run(lease, () => controller.operation('deposit', () => new Promise((_, r) => { reject = r; }), true));
+    await controller.control('cancel', 'Alice');
+    reject(new Error('cancelled while transferring'));
+    await assert.rejects(pending);
+    controller.finishAction(lease, []);
+    assert.equal(task.state, 'cancelled');
+    assert.equal(controller.suspended, false);
+});
+
+test('nested container transfer is covered by one outer inventory receipt', async () => {
+    const { controller } = fixture();
+    const task = start(controller), lease = begin(controller, task);
+    await assert.rejects(controller.context.run(lease, () => controller.operation('deposit', () =>
+        controller.operation('transfer', async () => { throw new Error('lost ack'); }, true),
+        true, [7,0,5])));
+    controller.finishAction(lease, []);
+    assert.equal(task.recoveryEvidence.length,1);
+    assert.equal(task.recoveryEvidence[0].name,'deposit');
 });

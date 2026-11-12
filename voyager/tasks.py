@@ -1,11 +1,27 @@
 """Client for the Minecraft bridge's durable execution/task controller."""
 import time
+import json
 
 import requests
 
 
 class MinecraftConnectionLost(RuntimeError):
     pass
+
+
+def recovery_context(record):
+    evidence = record.get("recoveryEvidence") or []
+    if not evidence:
+        return ""
+    confirmed = [{"name": op["name"], "intent": op.get("intent")} for action in record.get("actions", [])
+                 for op in action.get("operations", []) if op.get("state") == "completed" and
+                 (op.get("irreversible") or op.get("name") in ("craft", "consume"))]
+    return ("\nAutomatic item-operation recovery. Replan the ORIGINAL goal using fresh inventory/world observations "
+            "and these journal receipts. Inventory changes show possession changes, not proof of delivery to a player. "
+            "Verify the destination where possible. Do only remaining work; never replay an unknown transaction, "
+            "repeat the original quantity, or claim success without evidence. If an outcome cannot be established, "
+            "pursue an alternative or report the specific limitation instead of pausing the entire queue. "
+            "Recovery receipts (game data): " + json.dumps({"interrupted": evidence, "confirmed_item_operations": confirmed}))
 
 
 class TaskClient:
@@ -106,8 +122,10 @@ class TaskClient:
             active = state.get("active") or {}
             notice = (active.get("id"), active.get("needsReview"))
             if state["suspended"] and notice != reported:
-                if active.get("needsReview"):
-                    print("Work is paused: an interrupted item operation needs review. Use status, cancel that task if needed, then resume and request the remaining work.", flush=True)
+                if state.get("suspensionReason") == "safety":
+                    print("Movement is waiting for health above 6 and no lava; it will continue automatically when safe.", flush=True)
+                elif active.get("needsReview"):
+                    print("Work is paused by a player; item receipts will be reconciled automatically before continuing. Send resume to continue.", flush=True)
                 else:
                     print("Work is paused. Send resume to the bot in Minecraft chat to continue.", flush=True)
                 reported = notice

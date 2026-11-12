@@ -14,7 +14,7 @@
   },
   {
     "name": "control_task",
-    "description": "Actually stop, cancel, pause or resume work. Omit id and target for the active task. Use target to select by description (e.g. beehive); ambiguous matches return clarification. Only report the returned result. Never queue cancellation as gameplay work.",
+    "description": "Actually stop, cancel, pause or resume work. Resume is needed for explicit player pauses/stops, not reconnects: interrupted item receipts are reconciled and remaining work replanned automatically; unknown transfers must not be replayed. Danger pauses automatically continue when health is above 6 and out of lava. Omit id and target for the active task. Use target to select by description (e.g. beehive); ambiguous matches return clarification. Only report the returned result. Never queue cancellation as gameplay work.",
     "parameters": {
       "type": "object",
       "properties": {

@@ -5,7 +5,7 @@ const CONTROLS = [
     { name: "cmds", aliases: ["commands", "help"], usage: "cmds (also commands/help)", description: "list commands and request examples" },
     { name: "stop", usage: "stop", description: "cancel active work and halt new work until resume" },
     { name: "pause", usage: "pause", description: "pause work, keeping progress" },
-    { name: "resume", usage: "resume", description: "resume halted work" },
+    { name: "resume", usage: "resume", description: "resume a player's explicit pause/stop; reconnects reconcile item receipts and replan automatically; danger pauses continue when health is above 6 and out of lava" },
     { name: "cancel", usage: "cancel / cancel the current task / cancel task <id>", description: "cancel active or specified queued work" },
     { name: "status", usage: "status", description: "show current work", phrases: ["what are you doing"] },
     { name: "queue", usage: "queue", description: "list tasks and IDs", phrases: ["what's queue", "what's the queue", "what's task queue", "what's the task queue", "what is queue", "what is the queue", "what is task queue", "what is the task queue"] },

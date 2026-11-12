@@ -1,4 +1,5 @@
 const { Projects } = require("./projects");
+const itemRecovery = require("./itemRecovery");
 const blockStates = require("./blockStates");
 const { MovementModes } = require("./movementModes");
 const { resolveWorldTarget } = require("./targetResolver");
@@ -50,20 +51,23 @@ class TaskController {
             const legacyRecovery = !data.suspensionReason && !this.suspendOwner &&
                 this.records.some(t => t.state === "paused" && t.recovery && !t.needsReview);
             if (legacyRecovery) this.suspended = false;
-            const explicitHalt = this.suspended;
+            // A recovery halt is not a player's pause, including older journals.
+            const explicitHalt = this.suspended && (["manual", "safety"].includes(this.suspensionReason) ||
+                (!this.suspensionReason && this.suspendOwner && !this.records.some(t => t.needsReview)));
+            if (!explicitHalt) {
+                this.suspended = false;
+                this.suspendOwner = null;
+                this.suspensionReason = null;
+            }
             for (const task of this.records) {
-                if (task.state === "running" || (legacyRecovery && task.state === "paused" && task.recovery && !task.needsReview)) {
+                if (task.state === "running" || (task.state === "paused" && (task.needsReview || task.recovery) && (!explicitHalt || task.needsReview))) {
                     task.generation++;
                     task.recovery = true;
                     task.needsReview = Boolean(task.needsReview || task.actions.some(a => a.operations?.some(o =>
                         ["started", "uncertain"].includes(o.state) && (o.irreversible || ["craft", "consume"].includes(o.name)))));
-                    task.state = task.needsReview || explicitHalt ? "paused" : "queued";
+                    if (task.needsReview) itemRecovery.reconcile(task, bot);
+                    task.state = explicitHalt ? "paused" : "queued";
                     for (const action of task.actions) if (action.state === "started") action.state = "interrupted";
-                    if (task.needsReview) {
-                        this.suspended = true;
-                        this.suspensionReason = "review";
-                        this.suspendOwner ||= task.requester;
-                    }
                 }
             }
         }
@@ -111,6 +115,14 @@ class TaskController {
         );
     }
     snapshot() {
+        if (this.suspensionReason === "safety" && this.bot.health > 6 && this.bot.entity && !this.bot.entity.isInLava) {
+            this.suspended = false; this.suspendOwner = null; this.suspensionReason = null;
+            this.revision++;
+            for (const task of this.records) if (task.state === "paused") {
+                task.state = "queued"; task.generation++; task.recovery = true;
+            }
+            this.save();
+        }
         this.movementModes.dispatch();
         return {
             revision: this.revision,
@@ -118,6 +130,7 @@ class TaskController {
             planning: this.planning,
             interpreting: this.bot.conversation?.inbox?.size || 0,
             suspended: this.suspended,
+            suspensionReason: this.suspensionReason,
             active: this.active() || null,
             tasks: this.records,
         };
@@ -317,7 +330,9 @@ class TaskController {
             if (interpreting && !visible.length && !this.active())
                 return `Interpreting ${interpreting} new player message(s); no active task yet.`;
             const halt = this.suspended
-                ? "Work is paused; resume is needed before queued work can run. "
+                ? this.suspensionReason === "safety"
+                    ? "Movement is waiting for health above 6 and no lava; it will continue automatically when safe. "
+                    : "Work is paused; resume is needed before queued work can run. "
                 : "";
             if (
                 !visible.length &&
@@ -421,8 +436,6 @@ class TaskController {
             }`;
         }
         if (command === "resume") {
-            if (record?.needsReview)
-                return "An interrupted item operation needs inventory review. Cancel that task and request only the remaining work; I won't replay the uncertain transfer.";
             this.revision++;
             this.suspended = false;
             this.suspendOwner = null;
@@ -499,11 +512,14 @@ class TaskController {
             throw new TaskInterrupted();
     }
 
-    async operation(name, fn, irreversible = false) {
+    async operation(name, fn, irreversible = false, args = []) {
         const lease = this.context.getStore();
         const nested = lease && this.atomicContext.getStore() === lease;
         if (!nested) this.check();
         if (!lease) return fn();
+        // Container helpers call transfer internally. The outer atomic operation
+        // owns its receipt and quantity; a second nested receipt would double-count it.
+        if (nested) return fn();
         const atomic =
             irreversible ||
             [
@@ -520,11 +536,12 @@ class TaskController {
             ].includes(name);
         if (atomic && !nested && lease.atomicLock)
             throw new Error("Run inventory and world mutations sequentially");
+        const task = lease.taskId && this.get(lease.taskId);
+        const recovered = itemRecovery.guard(task, name, args);
         const operation = { name, irreversible, atomic, state: "started" };
-        if (irreversible)
-            operation.inventoryBefore = this.bot.inventory
-                ?.items()
-                .map((i) => ({ name: i.name, count: i.count }));
+        operation.intent = itemRecovery.intent(name, args);
+        if (irreversible || ["craft", "consume"].includes(name))
+            operation.inventoryBefore = itemRecovery.inventory(this.bot);
         lease.action.operations.push(operation);
         this.save();
         if (atomic && !nested) lease.atomicLock = true;
@@ -536,27 +553,27 @@ class TaskController {
                 result = await pending;
             } else result = await this.abortable(fn(), lease);
             operation.state = "completed";
+            for (const evidence of recovered) {
+                evidence.changed += evidence.remaining;
+                evidence.remaining = 0;
+                evidence.superseded = false;
+            }
         } catch (error) {
-            operation.state = irreversible ? "uncertain" : "interrupted";
+            operation.state = irreversible || ["craft", "consume"].includes(name) ? "uncertain" : "interrupted";
             const record = lease.taskId && this.get(lease.taskId);
-            if (irreversible && record) {
+            if (operation.state === "uncertain" && record) {
                 this.revision++;
                 record.needsReview = true;
-                record.state = "paused";
+                if (record.state === "running") record.state = "paused";
                 record.generation++;
-                this.suspended = true;
-                this.suspendOwner = record.requester;
-                this.suspensionReason = "review";
                 lease.abort.abort();
             }
             throw error;
         } finally {
             if (pending) lease.pending.delete(pending);
             if (atomic && !nested) lease.atomicLock = false;
-            if (irreversible)
-                operation.inventoryAfter = this.bot.inventory
-                    ?.items()
-                    .map((i) => ({ name: i.name, count: i.count }));
+            if (operation.inventoryBefore)
+                operation.inventoryAfter = itemRecovery.inventory(this.bot);
             this.save();
         }
         if (!nested) this.check();
@@ -619,6 +636,10 @@ class TaskController {
             lease.action.results = results || [];
             lease.action.error = error?.message || null;
             const record = lease.taskId ? this.get(lease.taskId) : null;
+            if (!this.disconnected && record?.needsReview) {
+                itemRecovery.reconcile(record, this.bot);
+                if (record.state === "paused" && this.suspensionReason !== "manual") record.state = "queued";
+            }
             if (record) record.updated = new Date().toISOString();
             if (this.lease === lease) this.lease = null;
             this.save();
@@ -662,7 +683,7 @@ class TaskController {
             if (typeof object?.[method] !== "function") return;
             const original = object[method].bind(object);
             object[method] = (...args) =>
-                this.operation(method, () => original(...args), irreversible);
+                this.operation(method, () => original(...args), irreversible, args);
         };
         for (const name of [
             "dig",

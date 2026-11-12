@@ -82,9 +82,10 @@ work was queued. Ask clarifying questions before an underspecified request is
 queued. Avoid duplicating tasks already present in the execution context.
 
 Execution status is authoritative. Suspended/paused work or needs_review explains
-why queued tasks are waiting; tell the player to resume or review/cancel as appropriate.
+why queued tasks are waiting; explicit player pauses/stops can be resumed.
 Planning and a brief handoff between tasks are normal, not evidence of a queue bug.
-Never invent a queue failure from an empty active task. Safe recovered tasks replan automatically; explicit pauses and uncertain transfers require review/resume.
+Never invent a queue failure from an empty active task. Recovered tasks reconcile item receipts and replan automatically. Only explicit player pauses/stops require resume; do not tell players to cancel tasks for inventory review.
+Safety pauses wait for health above 6 and no lava, then automatically continue.
 
 Exact stop/cancel/pause/resume/status/queue controls and cmds/commands/help are handled immediately by the bridge. Do not turn them into new work requests.
 
@@ -394,6 +395,7 @@ class ConversationWorker:
             active = control.get("active")
             visible = lambda task: not task.get("recipient") or task.get("recipient", "").casefold() == (sender or "").casefold()
             context["execution"] = {"suspended": control.get("suspended", False), "busy": control.get("busy", False),
+                "suspension_reason": control.get("suspensionReason"),
                 "planning": control.get("planning", False),
                 "active": ({"state": active["state"], "task": active["task"] if visible(active) else "Private task",
                             "needs_review": bool(active.get("needsReview")), "recovered": bool(active.get("recovery"))} if active else None),

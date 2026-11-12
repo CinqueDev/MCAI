@@ -193,7 +193,7 @@ class MovementModes {
                 controller.suspended = true; controller.suspendOwner = record.requester;
                 controller.suspensionReason = 'safety'; controller.revision++;
                 controller.save();
-                this.notify(record, 'Movement paused because I am in danger. Check the situation, then resume when safe.');
+                this.notify(record, 'Movement paused because I am in danger. I will continue automatically once my health is above 6 and I am out of lava.');
                 controller.lease.abort.abort();
                 return;
             }

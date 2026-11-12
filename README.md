@@ -348,7 +348,7 @@ Disconnects during an action return a typed connection-loss response immediately
 even if an old inventory transaction has not settled. Chat polling can also detect
 connection loss while an action-model call is pending. Concurrent reconnects are
 serialized, and shutdown prevents queued reconnect attempts. Recovery rejoins softly and
-uses the journal's receipts; uncertain item operations still require review. Local
+uses the journal's receipts to reconcile interrupted item operations automatically. Local
 errors never trigger inventory/position restoration or a hard reset. Event-record
 filenames use a bounded task slug and hash so long construction requests cannot
 fail with a filesystem filename-length error.
@@ -360,9 +360,9 @@ when no world ID is configured. Reuse the same checkpoint and identity for recov
 Setting/changing an explicit world ID selects a separate task journal. Queued work survives restart;
 safe previously running work is requeued automatically with a new execution
 generation, fresh observations, and its prior action receipts. Explicit player
-pauses/stops and safety halts remain in effect. Uncertain drops/transfers or
-crafting/consumption operations remain paused for review; they are never replayed
-automatically. Older checkpoints paused solely by reconnect recovery are migrated
+pauses/stops remain in effect. Interrupted drops/transfers and crafting/consumption
+operations receive inventory recovery receipts and a fresh planning turn, without
+globally halting work. Older checkpoints paused solely by inventory review or reconnect recovery are migrated
 to this policy. Queue/status replies distinguish paused work from normal planning. Player
 requests are dispatched while curriculum suggestions are generated in the background;
 abandoned suggestions are discarded, including suggestions made before a movement mode changed execution state. Resume replans against observations and
@@ -371,11 +371,20 @@ prior receipts, rather than continuing an old JavaScript stack.
 Cancellation is cooperative: movement and bounded waits are interrupted; an
 in-flight inventory transaction settles before another operation can start.
 Completed placements/drops are retained. A failed or crash-interrupted inventory
-operation is marked for review and cannot be automatically replayed: inspect the
-inventory, cancel that task, and request only the remaining work. Controls also
+operation is reconciled against its saved before/after inventory and, on reconnect,
+the live inventory. Recovery evidence is included in the next action-agent context.
+Known partial toss/withdraw/deposit quantities allow only the remaining quantity;
+unknown outcomes block replay of that operation within that task. The agent must
+verify delivery where possible, replan, or report a specific unresolved limitation;
+inventory loss alone does not prove that a player received items. Older journals
+without item details cannot establish quantities, so their uncertain operations
+remain guarded while other work can proceed. Controls also
 invalidate pending model output and old asynchronous movement callbacks. Arbitrary
 synchronous generated JavaScript that blocks Node's event loop cannot be preempted
 by this controller; helpers and generated programs must remain bounded.
+
+Movement danger pauses continue automatically once health is above 6 and the bot
+is out of lava; reconnecting does not bypass an ongoing danger or a player's stop.
 
 Chat requests now have explicit action helpers:
 
