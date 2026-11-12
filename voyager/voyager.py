@@ -501,6 +501,16 @@ class Voyager:
         return messages, reward, done, info
 
     def _next_work(self):
+        """A disconnect can race any scheduler request, including claim after readiness."""
+        while True:
+            try:
+                return self._next_work_connected()
+            except MinecraftConnectionLost as error:
+                logging.getLogger(__name__).warning("Scheduling interrupted: %s. Reconnecting without resetting progress.", error)
+                self._discard_curriculum = True
+                self.env.reconnect()
+
+    def _next_work_connected(self):
         """Claim chat work while one background curriculum suggestion is pending."""
         controller = getattr(self, "task_controller", None)
         planning_reported = False

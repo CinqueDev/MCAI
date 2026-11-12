@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { observeChatPackets } = require("./chatDiagnostics");
 
 function connectionOptions(body) {
     const auth = body.auth ?? "offline";
@@ -47,6 +48,7 @@ function connectionOptions(body) {
 
 // A kick or socket closure before spawn must finish /start, too.
 function watchConnection(bot, onFailure, onEnd) {
+    const chatDiagnostics = observeChatPackets(bot);
     let ready = false;
     let failed = false;
     let ended = false;
@@ -75,6 +77,10 @@ function watchConnection(bot, onFailure, onEnd) {
         kickReason =
             typeof reason === "string" ? reason : JSON.stringify(reason);
         console.error("Minecraft kicked:", kickReason);
+        if (kickReason.includes("chat_validation_failed"))
+            console.error("Chat validation packet metadata:", JSON.stringify({
+                version: bot.version, recent: chatDiagnostics(),
+            }));
         fail(reason);
         bot.end();
         cleanup(kickReason);

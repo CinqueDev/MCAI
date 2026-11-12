@@ -12,6 +12,33 @@ from voyager.utils.record_utils import EventRecorder
 
 
 class RuntimeRecoveryTests(unittest.TestCase):
+    def test_disconnect_between_ready_and_claim_reconnects_and_retries_scheduler(self):
+        agent = self.agent()
+        agent.conversation = Mock()
+        request = {'id':'saved','task':'Come to Alice','requester':'Alice','recipient':None}
+        agent.conversation.pop_task.side_effect = [MinecraftConnectionLost('multiplayer.disconnect.chat_validation_failed'),request]
+        with self.assertLogs('voyager.voyager',level='WARNING') as logs:
+            selected, proposal = agent._next_work()
+        self.assertEqual(selected,request)
+        self.assertIsNone(proposal)
+        agent.env.reconnect.assert_called_once()
+        agent.env.reset.assert_not_called()
+        agent.task_controller.complete.assert_not_called()
+        self.assertIn('chat_validation_failed',' '.join(logs.output))
+        self.assertTrue(agent._discard_curriculum)
+
+    def test_disconnect_after_claim_before_planning_update_reclaims_after_rejoin(self):
+        agent = self.agent()
+        agent.conversation = Mock()
+        agent.conversation.pop_task.side_effect = [
+            {'id':'saved','generation':1}, {'id':'saved','generation':3}]
+        agent.task_controller.set_planning.side_effect = [MinecraftConnectionLost('closed'),None]
+        with self.assertLogs('voyager.voyager',level='WARNING'):
+            selected,_ = agent._next_work()
+        self.assertEqual(selected['generation'],3)
+        agent.env.reconnect.assert_called_once()
+        agent.task_controller.complete.assert_not_called()
+
     def test_long_house_and_unicode_descriptions_record_without_filename_failures_and_resume(self):
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
             recorder = EventRecorder(ckpt_dir=directory)

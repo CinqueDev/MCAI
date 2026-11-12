@@ -360,8 +360,13 @@ These direct controls remain available when the social model is disabled.
 
 Disconnects during an action return a typed connection-loss response immediately,
 even if an old inventory transaction has not settled. Chat polling can also detect
-connection loss while an action-model call is pending. Concurrent reconnects are
-serialized, and shutdown prevents queued reconnect attempts. Recovery rejoins softly and
+connection loss while an action-model call is pending. Scheduling also retries connection loss between readiness, claiming
+work and updating planning state, so that race does not terminate the Python loop.
+For `chat_validation_failed` kicks, the bridge logs the last eight outbound chat
+packet metadata records (timing, length, signing flags and acknowledgement counts),
+without message text, signature contents or credentials. This diagnostic does not
+change chat signing or establish the server's reason for rejecting a packet.
+Concurrent reconnects are serialized, and shutdown prevents queued reconnect attempts. Recovery rejoins softly and
 uses the journal's receipts to reconcile interrupted item operations automatically. Local
 errors never trigger inventory/position restoration or a hard reset. Event-record
 filenames use a bounded task slug and hash so long construction requests cannot

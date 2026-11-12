@@ -1,0 +1,22 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const { observeChatPackets } = require('../lib/chatDiagnostics');
+test('chat diagnostics preserve packet writes, redact content and restore the writer', () => {
+    const bot=new EventEmitter(), sent=[];
+    bot._client={write(name, packet) { assert.equal(this,bot._client); sent.push([name,packet]); return 'sent'; }};
+    const original=bot._client.write, diagnostics=observeChatPackets(bot);
+    const packet={message:'PRIVATE CONTENT',signature:Buffer.from('SECRET'),timestamp:4n,offset:3,checksum:5};
+    for (let n=0;n<10;n++) assert.equal(bot._client.write('chat_message',packet),'sent');
+    bot._client.write('keep_alive',{id:42});
+    assert.equal(sent.length,11);
+    assert.equal(sent[0][1],packet);
+    assert.equal(diagnostics().length,8);
+    assert.equal(diagnostics()[0].characters,15);
+    assert.equal(diagnostics()[0].timestamp,'4');
+    assert.equal(diagnostics()[0].signed,true);
+    assert.equal(diagnostics()[0].count,3);
+    assert.doesNotMatch(JSON.stringify(diagnostics()),/PRIVATE|SECRET/);
+    bot.emit('end');
+    assert.equal(bot._client.write,original);
+});
