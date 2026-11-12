@@ -5,6 +5,7 @@
   "mc_username": "bot",
   "mc_version": null,
   "mc_pause_mode": "none",
+  "mc_allow_world_changes": true,
   "mc_profiles_folder": ".minecraft-auth",
   "ckpt_dir": "ckpt",
   "resume": false,

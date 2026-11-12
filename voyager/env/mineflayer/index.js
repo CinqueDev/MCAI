@@ -77,7 +77,8 @@ app.post("/start", (req, res) => {
 
     // Event subscriptions
     connectionBot.waitTicks = req.body.waitTicks;
-    connectionBot.pauseMode = req.body.pauseMode || "mod";
+    connectionBot.allowWorldChanges = req.body.allowWorldChanges !== false;
+    connectionBot.pauseMode = connectionBot.allowWorldChanges ? (req.body.pauseMode || "mod") : "none";
     connectionBot.serverPaused = false;
     connectionBot.globalTickCounter = 0;
     connectionBot.stuckTickCounter = 0;
@@ -193,7 +194,7 @@ app.post("/start", (req, res) => {
             );
             if (res.headersSent) return;
             initCounter(connectionBot);
-            for (const command of worldSetupCommands(connectionBot.version)) {
+            for (const command of connectionBot.allowWorldChanges ? worldSetupCommands(connectionBot.version) : []) {
                 connectionBot.chat(command);
             }
             const observation = connectionBot.observe();
@@ -612,6 +613,8 @@ app.post("/pause", async (req, res) => {
     const mode = req.body.mode || currentBot.pauseMode;
     if (typeof paused !== "boolean")
         return res.status(400).json({ error: "paused must be boolean" });
+    if (!currentBot.allowWorldChanges)
+        return res.json({ message: "World changes are disabled", paused: false });
     try {
         if (paused && currentBot.tasks?.active()?.movement && !currentBot.tasks.suspended)
             return res.json({ message: "Persistent movement needs world ticks", paused: false });

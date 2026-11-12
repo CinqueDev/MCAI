@@ -64,8 +64,18 @@ class PlayerActionIntegrationTests(unittest.TestCase):
         voyager.conversation.has_tasks.assert_not_called()
 
     def test_player_request_setup_uses_observation_without_time_or_difficulty_commands(self):
+        self.assert_reset_setup(player_request=True, allow_world_changes=True, expected="")
+
+    def test_protected_learning_reset_does_not_change_time_or_difficulty(self):
+        self.assert_reset_setup(player_request=False, allow_world_changes=False, expected="")
+
+    def test_unprotected_learning_reset_keeps_world_setup(self):
+        self.assert_reset_setup(player_request=False, allow_world_changes=True,
+            expected="bot.chat(`/time set ${getNextTime()}`);\nbot.chat('/difficulty peaceful');")
+
+    def assert_reset_setup(self, player_request, allow_world_changes, expected):
         voyager = Voyager.__new__(Voyager)
-        voyager.env = Mock(player_request=True)
+        voyager.env = Mock(player_request=player_request, mc_allow_world_changes=allow_world_changes)
         voyager.env.step.return_value = events()
         voyager.env_wait_ticks = 5
         voyager.skill_manager = Mock()
@@ -74,4 +84,4 @@ class PlayerActionIntegrationTests(unittest.TestCase):
         voyager.action_agent.render_human_message.return_value = HumanMessage(content="observation")
         voyager.curriculum_agent = Mock(completed_tasks=[])
         voyager.reset(task="Go to Alice")
-        voyager.env.step.assert_called_once_with("")
+        voyager.env.step.assert_called_once_with(expected)

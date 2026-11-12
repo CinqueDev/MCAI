@@ -32,6 +32,7 @@ function tickPause(bot, paused, timeoutMs = 5000) {
 }
 
 async function setPaused(bot, mode, paused) {
+    if (bot.allowWorldChanges === false) return;
     if (mode === "none") return;
     if (mode === "tick") {
         try {

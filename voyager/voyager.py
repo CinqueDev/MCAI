@@ -68,6 +68,7 @@ class Voyager:
         chat_enabled: bool = True,
         task_operators=None,
         world_id: str = None,
+        mc_allow_world_changes: bool = True,
     ):
         """
         The main class for Voyager.
@@ -82,6 +83,7 @@ class Voyager:
         :param mc_version: protocol version, or None for automatic detection
         :param mc_profiles_folder: local Microsoft token cache directory
         :param mc_pause_mode: auto, none, mod (/pause), or tick (/tick freeze and unfreeze)
+        :param mc_allow_world_changes: allow tick, difficulty, time and gamerule changes; False disables server pausing
         :param chat_enabled: enable background player conversation and queued requests
         :param azure_login: legacy local Minecraft launcher config
         :param server_port: mineflayer port
@@ -147,6 +149,7 @@ class Voyager:
             mc_version=mc_version,
             mc_profiles_folder=mc_profiles_folder,
             mc_pause_mode=mc_pause_mode,
+            mc_allow_world_changes=mc_allow_world_changes,
             azure_login=azure_login,
             server_port=server_port,
             request_timeout=env_request_timeout,
@@ -256,7 +259,7 @@ class Voyager:
             "easy" if len(self.curriculum_agent.completed_tasks) > 15 else "peaceful"
         )
         # step to peek an observation
-        setup = "" if self.env.player_request else (
+        setup = "" if self.env.player_request or not self.env.mc_allow_world_changes else (
             "bot.chat(`/time set ${getNextTime()}`);\n"
             + f"bot.chat('/difficulty {difficulty}');"
         )

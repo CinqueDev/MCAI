@@ -111,6 +111,7 @@ For example, a local Java 26.1 LAN configuration is:
   "mc_username": "bot",
   "mc_version": "26.1",
   "mc_pause_mode": "none",
+  "mc_allow_world_changes": false,
   "ckpt_dir": "ckpt-first-run",
   "resume": false
 }
@@ -241,6 +242,16 @@ confirmation fails. It freezes world simulation for everyone; players and their
 mounts still move. See the [official 1.20.3 tick command documentation](https://www.minecraft.net/en-us/article/minecraft-java-edition-1-20-3).
 If the process is forcibly killed while frozen, an operator may need to run
 `/tick unfreeze` manually.
+
+Set `"mc_allow_world_changes": false` in `config.json`, pass
+`--no-mc-allow-world-changes`, or use `Voyager(mc_allow_world_changes=False, ...)`
+to preserve the server's tick, difficulty, time and gamerule settings. This
+overrides every pause mode to `none`, skips startup gamerules and learning-reset
+time/difficulty changes, and rejects those commands from generated actions too.
+The default is `true` for compatibility. Restart the bot after changing the
+setting; it does not restore settings changed by earlier runs. Player task
+`stop`, `pause` and `resume` controls still work. Other operator commands used by
+hard resets, such as inventory changes and teleportation, remain available.
 
 ## Playing and chatting with the agent
 

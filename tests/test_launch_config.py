@@ -48,6 +48,7 @@ class LaunchConfigTests(unittest.TestCase):
 
     def test_invalid_settings_fail_before_launch(self):
         for values in [{"mc_port": True}, {"mc_port": 70000}, {"resume": "false"},
+                       {"mc_allow_world_changes": "false"}, {"mc_allow_world_changes": 0},
                        {"chat_enabled": "false"}, {"task_operators": "Alice"}, {"task_operators": ["bad name"]}, {"world_id": 42}, {"world_id": ""}, {"mc_version": 26.1}, {"mc_auth": "bad"},
                        {"mc_auth": "microsoft"}, {"mc_pause_mode": "bad"},
                        {"deepseek_api_key": "do-not-print-this"}]:
@@ -57,6 +58,15 @@ class LaunchConfigTests(unittest.TestCase):
                 with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
                     run.parse_settings(["--config", str(path)])
                 self.assertNotIn("do-not-print-this", stderr.getvalue())
+
+    def test_world_changes_config_and_cli_overrides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_config(directory, mc_allow_world_changes=False)
+            args = ["--config", str(path)]
+            self.assertFalse(run.parse_settings(args)[0]["mc_allow_world_changes"])
+            self.assertTrue(run.parse_settings(args + ["--mc-allow-world-changes"])[0]["mc_allow_world_changes"])
+            path = self.write_config(directory, mc_allow_world_changes=True)
+            self.assertFalse(run.parse_settings(args + ["--no-mc-allow-world-changes"])[0]["mc_allow_world_changes"])
 
     def test_missing_or_malformed_config_fails_clearly(self):
         with tempfile.TemporaryDirectory() as directory:

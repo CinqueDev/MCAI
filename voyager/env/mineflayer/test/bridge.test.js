@@ -6,7 +6,7 @@ const vm = require("node:vm");
 const { EventEmitter } = require("node:events");
 
 // Exercise real route handlers without Minecraft, plugins, or a listening socket.
-function bridge({ initError = null } = {}) {
+function bridge({ initError = null, setupCommands = [] } = {}) {
     const routes = {};
     const bots = [];
     const options = [];
@@ -24,7 +24,7 @@ function bridge({ initError = null } = {}) {
             if (name === "./lib/connection") return require("../lib/connection");
             if (name === "./lib/pause") return require("../lib/pause");
             if (name === "./lib/utils") return { initCounter() { if (initError) throw new Error(initError); } };
-            if (name === "./lib/compatibility") return { worldSetupCommands: () => [] };
+            if (name === "./lib/compatibility") return { worldSetupCommands: () => setupCommands };
             if (name === "./lib/observation/base") return { inject(bot) { bot.observe = () => "observation"; } };
             if (name === "./lib/skillLoader") return { inject() {} };
             if (name === "mineflayer") return { createBot(settings) {
@@ -66,6 +66,43 @@ function response() {
         json(value) { assert.equal(this.headersSent, false); this.value = value; this.headersSent = true; },
     };
 }
+
+test("world protection skips startup rules, blocks generated commands and ignores pause requests", async () => {
+    const { routes, bots, spawn } = bridge({ setupCommands: ["/gamerule doDaylightCycle false"] });
+    const started = response();
+    routes["/start"]({ body: { port: 25565, allowWorldChanges: false, pauseMode: "tick", serverPaused: true } }, started);
+    await spawn();
+    assert.equal(started.statusCode, 200);
+    const bot = bots[0];
+    assert.equal(bot.pauseMode, "none");
+    assert.deepEqual(bot.commands, []);
+    for (const command of ["/difficulty peaceful", "/tick freeze", "/minecraft:tick rate 100",
+        "/gamerule randomTickSpeed 100", "/time set day", "/pause",
+        "/execute as @s run minecraft:difficulty hard", "/return run tick step 10"]) {
+        assert.throws(() => bot.chat(command), /mc_allow_world_changes=false/);
+    }
+    assert.deepEqual(bot.commands, []);
+    const paused = response();
+    await routes["/pause"]({ body: { paused: true, mode: "tick" } }, paused);
+    assert.equal(paused.value.paused, false);
+    assert.equal(bot.serverPaused, false);
+    bot.chat("/msg Alice I can run difficulty tests");
+    assert.deepEqual(bot.commands, ["/msg Alice I can run difficulty tests"]);
+    // The setting survives reconnection without touching the previous bot.
+    routes["/start"]({ body: { port: 25565, allowWorldChanges: false } }, response());
+    await spawn(1);
+    assert.throws(() => bots[1].chat("/tick unfreeze"), /mc_allow_world_changes=false/);
+    assert.deepEqual(bots[1].commands, []);
+});
+
+test("world changes remain allowed by default", async () => {
+    const setupCommands = ["/gamerule doDaylightCycle false"];
+    const { routes, bots, spawn } = bridge({ setupCommands });
+    routes["/start"]({ body: { port: 25565 } }, response());
+    await spawn();
+    bots[0].chat("/difficulty peaceful");
+    assert.deepEqual(bots[0].commands, [...setupCommands, "/difficulty peaceful"]);
+});
 
 test("start forwards remote settings and kick replies with useful failure", () => {
     const { routes, bots, options } = bridge();

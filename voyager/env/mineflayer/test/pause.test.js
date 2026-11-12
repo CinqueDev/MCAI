@@ -60,3 +60,13 @@ test("none sends no commands and mod retains legacy toggle", async () => {
     await setPaused(bot, "mod", true);
     assert.deepEqual(bot.commands, ["/pause"]);
 });
+
+test("world protection disables tick and mod pausing even when called directly", async () => {
+    const bot = fakeBot();
+    bot.allowWorldChanges = false;
+    for (const mode of ["tick", "mod"]) {
+        await setPaused(bot, mode, true);
+        await setPaused(bot, mode, false);
+    }
+    assert.deepEqual(bot.commands, []);
+});

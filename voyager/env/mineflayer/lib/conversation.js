@@ -4,6 +4,7 @@ const { parseLocationMemory } = require("./locationMemory");
 const { parseControl } = require("./tasks");
 const { playerState } = require("./playerState");
 const { randomUUID } = require("node:crypto");
+const { assertWorldCommandAllowed } = require("./worldSettings");
 
 // One conversation lifetime per Minecraft connection. Diagnostics never go on wire.
 class Conversation {
@@ -19,7 +20,11 @@ class Conversation {
         this.delivery = new ChatDelivery(this, deliveryOptions);
         this.lastSpoke = now();
         this.task = null;
-        this.rawChat = bot.chat.bind(bot);
+        const rawChat = bot.chat.bind(bot);
+        this.rawChat = (message) => {
+            assertWorldCommandAllowed(bot, message);
+            return rawChat(message);
+        };
         bot.log = (message) => {
             console.log(`[action] ${message}`);
             bot.emit("chatEvent", bot.username, String(message));

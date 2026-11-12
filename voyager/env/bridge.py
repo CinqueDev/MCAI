@@ -34,7 +34,10 @@ class VoyagerEnv(gym.Env):
         mc_version=None,
         mc_profiles_folder=".minecraft-auth",
         mc_pause_mode="auto",
+        mc_allow_world_changes=True,
     ):
+        if type(mc_allow_world_changes) is not bool:
+            raise ValueError("mc_allow_world_changes must be a boolean")
         if mc_pause_mode not in ("auto", "none", "mod", "tick"):
             raise ValueError("mc_pause_mode must be auto, none, mod, or tick")
         if not isinstance(mc_host, str) or not mc_host.strip():
@@ -70,6 +73,9 @@ class VoyagerEnv(gym.Env):
             self.mc_pause_mode = "mod" if (
                 mc_host in ("localhost", "127.0.0.1", "::1") and mc_auth == "offline"
             ) else "none"
+        self.mc_allow_world_changes = mc_allow_world_changes
+        if not mc_allow_world_changes:
+            self.mc_pause_mode = "none"
         self.mc_pause = self.mc_pause_mode != "none"
         self.mc_port = mc_port
         self.azure_login = azure_login
@@ -266,6 +272,7 @@ class VoyagerEnv(gym.Env):
             "version": self.mc_version,
             "profilesFolder": self.mc_profiles_folder,
             "pauseMode": self.mc_pause_mode,
+            "allowWorldChanges": self.mc_allow_world_changes,
             "taskJournalPath": self.task_journal_path,
             "taskOperators": self.task_operators,
             "reset": options.get("mode", "hard"),

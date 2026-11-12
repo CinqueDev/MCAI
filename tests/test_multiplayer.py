@@ -27,6 +27,17 @@ class MultiplayerTests(unittest.TestCase):
             self.assertFalse(env.unpause())
             post.assert_not_called()
 
+    def test_world_protection_overrides_every_pause_mode(self):
+        for mode in ("auto", "none", "mod", "tick"):
+            with self.subTest(mode=mode):
+                env = self.make_env(mc_port=25565, mc_pause_mode=mode, mc_allow_world_changes=False)
+                self.assertFalse(env.mc_allow_world_changes)
+                self.assertEqual(env.mc_pause_mode, "none")
+                with patch("voyager.env.bridge.requests.post") as post:
+                    self.assertFalse(env.pause())
+                    self.assertFalse(env.unpause())
+                    post.assert_not_called()
+
     def test_microsoft_local_connection_does_not_pause_by_default(self):
         env = self.make_env(mc_port=25565, mc_auth="microsoft", mc_username="account")
         self.assertFalse(env.mc_pause)
@@ -35,6 +46,7 @@ class MultiplayerTests(unittest.TestCase):
 
     def test_invalid_settings_fail_before_subprocess_creation(self):
         for kwargs in [dict(mc_port=0), dict(mc_port=65536), dict(mc_port=True),
+                       dict(mc_port=25565, mc_allow_world_changes="false"),
                        dict(mc_port=25565, mc_auth="invalid"),
                        dict(mc_port=25565, mc_auth="microsoft"),
                        dict(mc_port=25565, mc_username="bad name"),
@@ -46,7 +58,7 @@ class MultiplayerTests(unittest.TestCase):
 
     def test_reset_forwards_options_and_reconnect_preserves_them(self):
         env = self.make_env(mc_host="example.org", mc_auth="microsoft", mc_username="account",
-                            mc_version="1.19", mc_profiles_folder=".minecraft-auth")
+                            mc_version="1.19", mc_profiles_folder=".minecraft-auth", mc_allow_world_changes=False)
         with patch("voyager.env.bridge.time.sleep"), patch.object(env, "check_process", return_value=json.dumps([])):
             env.reset()
         self.assertEqual(env.reset_options["host"], "example.org")
@@ -55,6 +67,8 @@ class MultiplayerTests(unittest.TestCase):
         self.assertEqual(env.reset_options["version"], "1.19")
         self.assertEqual(env.reset_options["profilesFolder"], os.path.abspath(".minecraft-auth"))
         self.assertEqual(env.reset_options["reset"], "soft")
+        self.assertFalse(env.reset_options["allowWorldChanges"])
+        self.assertEqual(env.reset_options["pauseMode"], "none")
         env.mineflayer.is_running = False
         env.mineflayer.run.side_effect = lambda: setattr(env.mineflayer, "is_running", True)
         with patch("voyager.env.bridge.requests.post", return_value=Mock(status_code=200)) as post:
@@ -94,10 +108,11 @@ class MultiplayerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "stop after env"):
                 Voyager(mc_host="example.org", mc_auth="microsoft", mc_username="account",
                         mc_version="1.19", mc_profiles_folder="cache", mc_pause_mode="none",
-                        deepseek_api_key="test")
+                        deepseek_api_key="test", mc_allow_world_changes=False)
         options = env.call_args.kwargs
         self.assertEqual(options["mc_host"], "example.org")
         self.assertEqual(options["mc_auth"], "microsoft")
         self.assertEqual(options["mc_username"], "account")
         self.assertEqual(options["mc_profiles_folder"], "cache")
         self.assertEqual(options["mc_pause_mode"], "none")
+        self.assertFalse(options["mc_allow_world_changes"])

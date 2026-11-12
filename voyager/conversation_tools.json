@@ -48,7 +48,7 @@
   },
   {
     "name": "queue_task",
-    "description": "Use this native function to actually queue an explicit request for Minecraft work; describing work in a reply does not queue it. Explicit untagged work requests must use a tool even during a social-chat cooldown. Preserve requested counts, materials and coordinates. Include the actual requesting username. Work is attempted later, not performed immediately by this tool. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested.",
+    "description": "Use this native function to actually queue an explicit request for Minecraft work; describing work in a reply does not queue it. Explicit untagged work requests must use a tool even during a social-chat cooldown. Preserve requested counts, materials and coordinates. Include the actual requesting username. Work is attempted later, not performed immediately by this tool. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested. Server configuration mc_allow_world_changes=false blocks tick, difficulty, time and gamerule commands and server pausing; it cannot be changed through this tool. Task stop/pause/resume remain available.",
     "parameters": {
       "type": "object",
       "properties": {

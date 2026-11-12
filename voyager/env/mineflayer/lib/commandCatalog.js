@@ -53,6 +53,7 @@ function renderCommandHelp(username) {
         `Commands for ${username}: say cmds in public or /msg ${username} cmds. No slash prefix needed in public.`,
         "[Immediate controls] " + CONTROLS.map(c => `${c.usage}: ${c.description}`).join("; ") + ".",
         "Control alternatives: what are you doing?; what's the queue?; stop building; cancel the current task; pause working; resume my task; continue working. Only requesters/operators control player tasks.",
+        "Server configuration: mc_allow_world_changes=false blocks tick, difficulty, time and gamerule commands and server pausing; task stop/pause/resume still work. Change this in config.json and restart the bot.",
         "[Memory requests] " + MEMORY.flatMap(m => m.examples).join("; ") + ".",
         "Current-location saves use YOUR loaded coordinates; no label saves as <player>'s saved location. Private memory stays private. If your position is unknown, provide coordinates and dimension.",
         "[Gameplay requests] " + ACTIONS.map(a => a.example).join("; ") + ".",

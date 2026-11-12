@@ -25,6 +25,7 @@ DEFAULTS = {
     "mc_version": None,
     "mc_profiles_folder": ".minecraft-auth",
     "mc_pause_mode": "auto",
+    "mc_allow_world_changes": True,
     "ckpt_dir": "ckpt",
     "resume": False,
     "chat_enabled": True,
@@ -46,6 +47,9 @@ def parse_settings(argv=None):
     parser.add_argument("--mc-profiles-folder", default=argparse.SUPPRESS)
     parser.add_argument("--mc-pause-mode", choices=("auto", "none", "mod", "tick"),
                         default=argparse.SUPPRESS)
+    parser.add_argument("--mc-allow-world-changes", action=argparse.BooleanOptionalAction,
+                        default=argparse.SUPPRESS,
+                        help="Allow tick, difficulty, time and gamerule changes (disable to also prevent server pausing)")
     parser.add_argument("--world-id", default=argparse.SUPPRESS, help="Stable world identity; change it for a new/reset world")
     parser.add_argument("--ckpt-dir", default=argparse.SUPPRESS)
     parser.add_argument("--task-operators", nargs="+", default=argparse.SUPPRESS, help="Minecraft usernames allowed to control other players tasks")
@@ -68,6 +72,8 @@ def parse_settings(argv=None):
         parser.error(f"Config file does not exist: {config_path}")
 
     settings = {**DEFAULTS, **config, **overrides}
+    if type(settings["mc_allow_world_changes"]) is not bool:
+        parser.error("mc_allow_world_changes must be a JSON boolean (true or false)")
     if type(settings["mc_port"]) is not int or not 1 <= settings["mc_port"] <= 65535:
         parser.error("Set mc_port to an integer from 1 to 65535 in config.json or use --mc-port")
     if not isinstance(settings["task_operators"], list) or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,16}", name) for name in settings["task_operators"]):
