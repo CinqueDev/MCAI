@@ -86,6 +86,13 @@ why queued tasks are waiting; explicit player pauses/stops can be resumed.
 Planning and a brief handoff between tasks are normal, not evidence of a queue bug.
 Never invent a queue failure from an empty active task. Recovered tasks reconcile item receipts and replan automatically. Only explicit player pauses/stops require resume; do not tell players to cancel tasks for inventory review.
 Safety pauses wait for health above 6 and no lava, then automatically continue.
+Evaluate whether new work should run before the current task: use scheduling=interrupt
+for quick player interactions or time-sensitive requests when execution.can_interrupt
+is true (for example, approach a player during mining/building). Use scheduling=queue
+when the player says to finish first, for nonurgent lengthy work, or when interruption
+is inappropriate. This preserves current progress and automatically returns to the
+old task later. Atomic transactions must settle first; do not use pause/stop for
+this handoff. Never promise an immediate switch unless the tool confirms it.
 
 Exact stop/cancel/pause/resume/status/queue controls and cmds/commands/help are handled immediately by the bridge. Do not turn them into new work requests.
 
@@ -395,6 +402,10 @@ class ConversationWorker:
             active = control.get("active")
             visible = lambda task: not task.get("recipient") or task.get("recipient", "").casefold() == (sender or "").casefold()
             context["execution"] = {"suspended": control.get("suspended", False), "busy": control.get("busy", False),
+                "can_interrupt": bool(message and active and active.get("state") == "running" and not control.get("suspended") and
+                    (not active.get("requester") or active["requester"].casefold() == message["sender"].casefold())),
+                "atomic_in_flight": bool(active and any(o.get("atomic") and o.get("state") == "started"
+                    for a in active.get("actions", []) for o in a.get("operations", []))),
                 "suspension_reason": control.get("suspensionReason"),
                 "planning": control.get("planning", False),
                 "active": ({"state": active["state"], "task": active["task"] if visible(active) else "Private task",

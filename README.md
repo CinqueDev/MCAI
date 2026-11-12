@@ -305,6 +305,20 @@ a task by parsing fixed user phrases. Normal conversation remains optional; only
 actual tool results confirm work. The review uses [DeepSeek JSON output](https://api-docs.deepseek.com/guides/json_mode/)
 and retries malformed review output once.
 
+For new work, the social agent evaluates urgency and the current task using the
+native tools' `scheduling` choice. `interrupt` asks to handle a quick or urgent
+request next, temporarily yielding eligible current work; `queue` waits (also the
+default when omitted). For example, “come here now, then continue mining” can
+yield mining, while “finish first, then gather wood” stays queued. The controller
+permits interruption of autonomous work or the same requester's work (operators
+can also interrupt other work), and preserves explicit player pauses/stops.
+Atomic transactions and blueprint cell receipts settle before switching. Old
+model output is discarded without waiting for its API call. Saved work re-enters
+the queue and replans from fresh observations, starting inventory and receipts;
+it requires no manual resume. Continuous following/staying must end before the
+old work can return. Tool replies report whether the switch was accepted or must
+wait, rather than claiming the new action already happened.
+
 Long replies are split into word-aware chunks and sent about 1.2 seconds apart.
 Each private chunk uses `/msg` to the original sender; retries resume the same
 reply instead of repeating chunks already sent.

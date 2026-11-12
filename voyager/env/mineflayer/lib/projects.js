@@ -178,14 +178,16 @@ class Projects {
                 (source ? `Use only the authorized storage at ${JSON.stringify(source.position)} in ${source.dimension}; respect recorded access instructions.` : 'Gather/craft only these bounded amounts. Do not clear player structures or take from unspecified storage.');
             const supply = this.controller.enqueue({ task: description, requester, recipient, priority: 110, resumeMovement: request.resume_following === true, key: receiptKey ? receiptKey + ':supply' : null });
             supply.projectSupplyFor = project.id;
+            if (request.scheduling === 'interrupt') this.controller.requestHandoff(supply);
             const build = this.enqueue(project, requester, recipient, receiptKey ? receiptKey + ':build' : null, supply.id, request.resume_following === true);
             build.dependsOnTask = supply.id;
-            result = { ok: true, message: `Queued bounded supplies ${supply.id.slice(0, 8)}, then project ${project.name}.`, project: this.summary(project) };
+            result = { ok: true, message: `Queued bounded supplies ${supply.id.slice(0, 8)}, then project ${project.name}.` + this.controller.schedulingMessage(supply), project: this.summary(project) };
         } else if (request.execute !== false) {
             const task = this.enqueue(project, requester, recipient, receiptKey ? receiptKey + ':build' : null, null, request.resume_following === true);
             task.projectVersion = project.versions.at(-1).version;
             if (action === 'continue') task.dependsOnTask = null;
-            result = { ok: true, message: `Saved project ${project.name}, version ${task.projectVersion}; task ${task.id.slice(0, 8)} is ${task.state}.`, project: this.summary(project) };
+            if (request.scheduling === 'interrupt') this.controller.requestHandoff(task);
+            result = { ok: true, message: `Saved project ${project.name}, version ${task.projectVersion}; task ${task.id.slice(0, 8)} is ${task.state}.` + this.controller.schedulingMessage(task), project: this.summary(project) };
         } else result = { ok: true, message: `Saved project ${project.name}, version ${project.versions.at(-1).version}; no building was queued.`, project: this.summary(project) };
         if (receiptKey) {
             this.controller.controlReceipts[receiptKey] = { signature, result };

@@ -96,10 +96,14 @@ class ConversationTools:
                        "recipient": actor if private else None, "expectedRevision": self.revision}
             if arguments.get("resume_following"):
                 request["resumeMovement"] = True
+            if "scheduling" in arguments:
+                request["scheduling"] = arguments["scheduling"]
             task = worker.task_client.enqueue(request, key=event + ':queue')
             if not task:
                 raise ValueError("Work changed while I was thinking. Please repeat the request")
-            return {"ok": True, "id": task["id"], "message": f"Queued {task['id'][:8]}: {task['task']}. It will be attempted after the current action."}
+            timing = {"interrupted": "I'm switching to this request; the previous task is saved to continue afterward.",
+                      "waiting_atomic": "I'll switch as soon as the current atomic operation settles; the previous task will continue afterward."}.get(task.get("schedulingResult"), "It will be attempted after the current action.")
+            return {"ok": True, "id": task["id"], "message": f"Queued {task['id'][:8]}: {task['task']}. {timing}"}
         if name in ("create_project", "revise_project", "continue_project", "project_status", "project_supplies"):
             if not worker.task_client:
                 raise ValueError("Persistent projects are unavailable")

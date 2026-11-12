@@ -144,11 +144,13 @@ class TaskController {
         key = null,
         expectedRevision = null,
         resumeMovement = false,
+        scheduling = "queue",
     }) {
         if (expectedRevision !== null && expectedRevision !== this.revision)
             return null;
         if (typeof task !== "string" || !task.trim())
             throw new Error("Task description is required");
+        if (!["queue", "interrupt"].includes(scheduling)) throw new Error("Invalid scheduling choice");
         if (requester !== null && !/^[A-Za-z0-9_]{1,16}$/.test(requester))
             throw new Error("Invalid requester");
         if (recipient !== null && recipient !== requester)
@@ -185,7 +187,58 @@ class TaskController {
         this.records.push(record);
         this.save();
         this.movementModes.yieldForForeground(record);
+        if (scheduling === "interrupt") this.requestHandoff(record);
         return record;
+    }
+
+    requestHandoff(next) {
+        const current = this.active();
+        if (!current && !this.suspended && next.requester) {
+            const eligible = this.records.filter(t => t.id !== next.id && t.state === "queued" && this.owns(t, next.requester));
+            next.priority = Math.max(next.priority, ...eligible.map(t => t.priority + 1));
+        }
+        if (this.suspended || !current || current.id === next.id || current.state !== "running" ||
+            !next.requester || !this.owns(current, next.requester) ||
+            (next.dependsOnTask && this.get(next.dependsOnTask)?.state !== "completed")) {
+            next.schedulingResult = "queued";
+            this.save();
+            return;
+        }
+        next.priority = Math.max(next.priority, current.priority + 1);
+        current.yieldTo = next.id;
+        next.schedulingResult = "waiting_atomic";
+        this.applyHandoff();
+        this.save();
+    }
+
+    schedulingMessage(task) {
+        return task.schedulingResult === "interrupted"
+            ? " Switching to this request; the previous task is saved to continue afterward."
+            : task.schedulingResult === "waiting_atomic"
+            ? " Switching after the current atomic operation settles; the previous task will continue afterward."
+            : "";
+    }
+
+    applyHandoff() {
+        const current = this.active();
+        const next = current?.yieldTo && this.get(current.yieldTo);
+        if (!next) return;
+        if (next.state !== "queued") { delete current.yieldTo; this.save(); return; }
+        if (this.suspended || current.state !== "running" || this.lease?.action.operations.some(o => o.atomic && o.state === "started")) return;
+        // A blueprint cell can span equip/dig/place calls. Finish its verified
+        // progress receipt before yielding so an untouched cell isn't made uncertain.
+        const project = current.projectId && this.projects.find(p => p.id === current.projectId);
+        if (project?.status === "building" && Object.values(project.progress).some(p => p.status === "intent")) return;
+        current.state = "queued";
+        current.yieldedFor = next.id;
+        current.generation++;
+        current.recovery = true;
+        current.updated = new Date().toISOString();
+        delete current.yieldTo;
+        next.schedulingResult = "interrupted";
+        this.revision++;
+        this.save();
+        this.context.exit(() => this.interrupt()).catch(error => console.error("Task handoff cleanup failed:", error.message));
     }
 
     claim(id = null) {
@@ -193,17 +246,22 @@ class TaskController {
         const record = id
             ? this.get(id)
             : this.records
-                  .filter((t) => t.state === "queued" && (!t.dependsOnTask || this.get(t.dependsOnTask)?.state === "completed"))
+                  .filter((t) => t.state === "queued" && !this.isYielded(t) && (!t.dependsOnTask || this.get(t.dependsOnTask)?.state === "completed"))
                   .sort((a, b) => b.priority - a.priority || a.updated.localeCompare(b.updated))[0];
         if (record && !record.requester && (this.bot.conversation?.inbox?.size || 0) > 0) return null;
-        if (!record || record.state !== "queued" || (record.dependsOnTask && this.get(record.dependsOnTask)?.state !== "completed")) return null;
+        if (!record || record.state !== "queued" || this.isYielded(record) || (record.dependsOnTask && this.get(record.dependsOnTask)?.state !== "completed")) return null;
         record.state = "running";
+        record.inventoryAtStart ||= itemRecovery.inventory(this.bot);
         this.revision++;
         this.planning = false;
         record.generation++;
         record.updated = new Date().toISOString();
         this.save();
         return record;
+    }
+
+    isYielded(task) {
+        return task.yieldedFor && ["queued", "running", "paused"].includes(this.get(task.yieldedFor)?.state);
     }
 
     complete(id, generation, success, reason = "") {
@@ -499,6 +557,7 @@ class TaskController {
     check() {
         const lease = this.context.getStore();
         if (!lease) return; // Startup and observation work have no generated-action context.
+        this.applyHandoff();
         const record = lease.taskId ? this.get(lease.taskId) : null;
         if (
             this.disconnected || lease.finished ||
@@ -642,6 +701,7 @@ class TaskController {
             }
             if (record) record.updated = new Date().toISOString();
             if (this.lease === lease) this.lease = null;
+            this.applyHandoff();
             this.save();
             this.movementModes.dispatch();
         };

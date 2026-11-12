@@ -11,17 +11,19 @@ class MinecraftConnectionLost(RuntimeError):
 
 def recovery_context(record):
     evidence = record.get("recoveryEvidence") or []
-    if not evidence:
+    if not evidence and not record.get("recovery"):
         return ""
     confirmed = [{"name": op["name"], "intent": op.get("intent")} for action in record.get("actions", [])
                  for op in action.get("operations", []) if op.get("state") == "completed" and
                  (op.get("irreversible") or op.get("name") in ("craft", "consume"))]
-    return ("\nAutomatic item-operation recovery. Replan the ORIGINAL goal using fresh inventory/world observations "
+    return ("\nResuming saved work after an interruption. Replan the ORIGINAL goal using fresh inventory/world observations "
             "and these journal receipts. Inventory changes show possession changes, not proof of delivery to a player. "
             "Verify the destination where possible. Do only remaining work; never replay an unknown transaction, "
             "repeat the original quantity, or claim success without evidence. If an outcome cannot be established, "
             "pursue an alternative or report the specific limitation instead of pausing the entire queue. "
-            "Recovery receipts (game data): " + json.dumps({"interrupted": evidence, "confirmed_item_operations": confirmed}))
+            "Recovery receipts (game data): " + json.dumps({"interrupted": evidence, "confirmed_item_operations": confirmed,
+                "inventory_at_task_start": record.get("inventoryAtStart"),
+                "completed_action_results": [a.get("results", []) for a in record.get("actions", []) if a.get("results")]}))
 
 
 class TaskClient:

@@ -48,7 +48,7 @@
   },
   {
     "name": "queue_task",
-    "description": "Use this native function to actually queue an explicit request for Minecraft work; describing work in a reply does not queue it. Explicit untagged work requests must use a tool even during a social-chat cooldown. Preserve requested counts, materials and coordinates. Include the actual requesting username. Work is attempted later, not performed immediately by this tool. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested. Server configuration mc_allow_world_changes=false blocks tick, difficulty, time and gamerule commands and server pausing; it cannot be changed through this tool. Task stop/pause/resume remain available.",
+    "description": "Use this native function to actually queue an explicit request for Minecraft work; describing work in a reply does not queue it. Explicit untagged work requests must use a tool even during a social-chat cooldown. Preserve requested counts, materials and coordinates. Include the actual requesting username. Work is attempted later, not performed immediately by this tool. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested. Server configuration mc_allow_world_changes=false blocks tick, difficulty, time and gamerule commands and server pausing; it cannot be changed through this tool. Task stop/pause/resume remain available. Choose scheduling=interrupt when this request should run next by temporarily yielding current eligible work; scheduling=queue leaves it waiting. The saved task continues afterward, using fresh observations.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -58,6 +58,14 @@
         "resume_following": {
           "type": "boolean",
           "description": "Set true only if the player explicitly asks to resume their previous following/staying mode after this work. Otherwise the new foreground request supersedes their old mode."
+        },
+        "scheduling": {
+          "type": "string",
+          "enum": [
+            "interrupt",
+            "queue"
+          ],
+          "description": "Evaluate current work: interrupt for a quick or urgent request when it is appropriate to temporarily yield your own or autonomous work; queue to wait. The controller preserves progress and waits for atomic operations. Explicit pauses/stops and other players' work are respected. Omitted means queue."
         }
       },
       "required": [
@@ -67,7 +75,9 @@
     },
     "examples": [
       "come here and wait for a pickaxe",
-      "mine sixteen coal"
+      "mine sixteen coal",
+      "come here now, then continue mining",
+      "finish what you are doing, then gather wood"
     ]
   },
   {
@@ -263,7 +273,7 @@
   },
   {
     "name": "set_movement",
-    "description": "Start continuous following or staying under the task controller, or stop/resume the requester's previous following mode. Modes persist until stopped or lost. A new foreground request from the same player supersedes their mode by default; other players' work temporarily yields it. Explicitly requested resume_following on the new work preserves it for afterward. For follow, reference defaults to the requesting player; for stay, reference defaults to the bot's current position. For stay HERE use current_location. Query resolve_target for ambiguous world references. Do not claim movement finished: inspect the returned Started/Queued/error receipt. For an explicit new work request that needs clarification, use mode=prepare_work and question to stop the requester's old movement before asking. If the task is ready, call queue_task/create_project instead; they perform the handoff automatically.",
+    "description": "Start continuous following or staying under the task controller, or stop/resume the requester's previous following mode. Modes persist until stopped or lost. A new foreground request from the same player supersedes their mode by default; other players' work temporarily yields it. Explicitly requested resume_following on the new work preserves it for afterward. For follow, reference defaults to the requesting player; for stay, reference defaults to the bot's current position. For stay HERE use current_location. Query resolve_target for ambiguous world references. Do not claim movement finished: inspect the returned Started/Queued/error receipt. For an explicit new work request that needs clarification, use mode=prepare_work and question to stop the requester's old movement before asking. If the task is ready, call queue_task/create_project instead; they perform the handoff automatically. Choose scheduling=interrupt when this request should run next by temporarily yielding current eligible work; scheduling=queue leaves it waiting. The saved task continues afterward, using fresh observations.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -339,6 +349,14 @@
         "question": {
           "type": "string",
           "description": "For prepare_work: ask the missing work details. The controller stops only this requester's follow/stay mode before delivering this clarification; no new work is queued."
+        },
+        "scheduling": {
+          "type": "string",
+          "enum": [
+            "interrupt",
+            "queue"
+          ],
+          "description": "Evaluate current work: interrupt for a quick or urgent request when it is appropriate to temporarily yield your own or autonomous work; queue to wait. The controller preserves progress and waits for atomic operations. Explicit pauses/stops and other players' work are respected. Omitted means queue."
         }
       },
       "required": [
@@ -357,7 +375,7 @@
   },
   {
     "name": "create_project",
-    "description": "Save a named, durable blueprint and normally queue construction. Ask for missing location/size/materials first. Cells are integer offsets relative to origin; specify ALL affected cells (1-4096 within 64x64 horizontal bounds). Actions default to place; remove/replace require expected original names AND explicit player permission for those exact changes. Never clear surrounding structures. Single-cell blocks only (no doors, beds or tall plants). Supported states: axis, single slab type top/bottom, furnace/chest facing. dependsOn lists relative positions of supports/earlier cells. execute=false is for requests to plan without building. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested.",
+    "description": "Save a named, durable blueprint and normally queue construction. Ask for missing location/size/materials first. Cells are integer offsets relative to origin; specify ALL affected cells (1-4096 within 64x64 horizontal bounds). Actions default to place; remove/replace require expected original names AND explicit player permission for those exact changes. Never clear surrounding structures. Single-cell blocks only (no doors, beds or tall plants). Supported states: axis, single slab type top/bottom, furnace/chest facing. dependsOn lists relative positions of supports/earlier cells. execute=false is for requests to plan without building. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested. Choose scheduling=interrupt when this request should run next by temporarily yielding current eligible work; scheduling=queue leaves it waiting. The saved task continues afterward, using fresh observations.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -512,6 +530,14 @@
         "resume_following": {
           "type": "boolean",
           "description": "Set true only if the player explicitly asks to resume their previous following/staying mode after this work. Otherwise the new foreground request supersedes their old mode."
+        },
+        "scheduling": {
+          "type": "string",
+          "enum": [
+            "interrupt",
+            "queue"
+          ],
+          "description": "Evaluate current work: interrupt for a quick or urgent request when it is appropriate to temporarily yield your own or autonomous work; queue to wait. The controller preserves progress and waits for atomic operations. Explicit pauses/stops and other players' work are respected. Omitted means queue."
         }
       },
       "required": [
@@ -528,7 +554,7 @@
   },
   {
     "name": "revise_project",
-    "description": "Save a new version of an existing project from an explicit revision request. Supply the full revised blueprint with relative offsets. Pause active construction and let the current operation settle before revising. Unchanged verified cells retain their receipts; changed cells require rechecking. A revision never automatically removes retired cells. To repair a conflicting player edit, explicitly specify replace and its expected block.",
+    "description": "Save a new version of an existing project from an explicit revision request. Supply the full revised blueprint with relative offsets. Pause active construction and let the current operation settle before revising. Unchanged verified cells retain their receipts; changed cells require rechecking. A revision never automatically removes retired cells. To repair a conflicting player edit, explicitly specify replace and its expected block. Choose scheduling=interrupt when this request should run next by temporarily yielding current eligible work; scheduling=queue leaves it waiting. The saved task continues afterward, using fresh observations.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -679,6 +705,14 @@
         },
         "execute": {
           "type": "boolean"
+        },
+        "scheduling": {
+          "type": "string",
+          "enum": [
+            "interrupt",
+            "queue"
+          ],
+          "description": "Evaluate current work: interrupt for a quick or urgent request when it is appropriate to temporarily yield your own or autonomous work; queue to wait. The controller preserves progress and waits for atomic operations. Explicit pauses/stops and other players' work are respected. Omitted means queue."
         }
       },
       "required": [
@@ -694,7 +728,7 @@
   },
   {
     "name": "continue_project",
-    "description": "Continue an existing named project from saved blueprint and verified progress. Reconcile the world first; changed cells produce conflicts and are preserved. Queue execution; do not say building is already finished. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested.",
+    "description": "Continue an existing named project from saved blueprint and verified progress. Reconcile the world first; changed cells produce conflicts and are preserved. Queue execution; do not say building is already finished. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested. Choose scheduling=interrupt when this request should run next by temporarily yielding current eligible work; scheduling=queue leaves it waiting. The saved task continues afterward, using fresh observations.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -704,6 +738,14 @@
         "resume_following": {
           "type": "boolean",
           "description": "Set true only if the player explicitly asks to resume their previous following/staying mode after this work. Otherwise the new foreground request supersedes their old mode."
+        },
+        "scheduling": {
+          "type": "string",
+          "enum": [
+            "interrupt",
+            "queue"
+          ],
+          "description": "Evaluate current work: interrupt for a quick or urgent request when it is appropriate to temporarily yield your own or autonomous work; queue to wait. The controller preserves progress and waits for atomic operations. Explicit pauses/stops and other players' work are respected. Omitted means queue."
         }
       },
       "required": [
@@ -735,7 +777,7 @@
   },
   {
     "name": "project_supplies",
-    "description": "Queue a bounded material subtask (up to 64 of each item, 128 items total), then continue the project only if that subtask succeeds. Optionally use an explicitly authorized storage reference; otherwise gather/craft. Respect ownership and access notes. Uses existing/learned item workflows; no new Phase 4 container guarantees. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested.",
+    "description": "Queue a bounded material subtask (up to 64 of each item, 128 items total), then continue the project only if that subtask succeeds. Optionally use an explicitly authorized storage reference; otherwise gather/craft. Respect ownership and access notes. Uses existing/learned item workflows; no new Phase 4 container guarantees. New foreground work stops the same player's existing follow/stay mode by default; use resume_following only when explicitly requested. Choose scheduling=interrupt when this request should run next by temporarily yielding current eligible work; scheduling=queue leaves it waiting. The saved task continues afterward, using fresh observations.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -801,6 +843,14 @@
         "resume_following": {
           "type": "boolean",
           "description": "Set true only if the player explicitly asks to resume their previous following/staying mode after this work. Otherwise the new foreground request supersedes their old mode."
+        },
+        "scheduling": {
+          "type": "string",
+          "enum": [
+            "interrupt",
+            "queue"
+          ],
+          "description": "Evaluate current work: interrupt for a quick or urgent request when it is appropriate to temporarily yield your own or autonomous work; queue to wait. The controller preserves progress and waits for atomic operations. Explicit pauses/stops and other players' work are respected. Omitted means queue."
         }
       },
       "required": [

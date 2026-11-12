@@ -186,3 +186,18 @@ test('preparing an underspecified house stops only requester movement and asks b
     modes.request({mode:'prepare_work',requester:'Bob',question:'Where should I build?'});
     assert.equal(controller.active().requester,'Alice');
 });
+
+test('following can interrupt ordinary work without the saved work immediately cancelling it', async t => {
+    const { controller, modes }=scene(t);
+    const old=controller.enqueue({task:'Mine iron',requester:'Alice'});
+    controller.claim(old.id);
+    const result=modes.request({mode:'follow',requester:'Alice',scheduling:'interrupt'});
+    await settle(); controller.snapshot();
+    assert.equal(old.state,'queued');
+    assert.equal(controller.active().id,result.id);
+    assert.equal(controller.get(result.id).state,'running');
+    assert.equal(controller.claim(old.id),null);
+    modes.request({mode:'stop_following',requester:'Alice'});
+    await settle();
+    assert.equal(controller.claim().id,old.id);
+});

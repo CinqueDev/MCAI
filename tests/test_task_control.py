@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -9,6 +10,32 @@ from voyager.tasks import TaskClient
 
 
 class TaskControlTests(unittest.TestCase):
+    def test_handoff_does_not_wait_for_an_obsolete_action_model_call(self):
+        voyager = Voyager.__new__(Voyager)
+        entered, release = threading.Event(), threading.Event()
+        voyager.task = 'Mine iron'
+        voyager.active_task = {'id':'old','generation':1}
+        voyager.task_controller = Mock()
+        voyager.task_controller.get.side_effect = lambda _: {'id':'old','generation':2 if entered.is_set() else 1,
+            'state':'queued' if entered.is_set() else 'running'}
+        voyager.action_agent_rollout_num_iter = 0
+        voyager.messages = [SystemMessage(content='system'),HumanMessage(content='task')]
+        voyager.action_agent = Mock()
+        voyager.env = Mock()
+        def generate(messages):
+            entered.set()
+            release.wait(3)
+            return AIMessage(content='obsolete code')
+        voyager.action_agent.llm.side_effect = generate
+        try:
+            _, _, _, info = voyager.step()
+            self.assertTrue(info['controlled'])
+            self.assertFalse(release.is_set())
+            voyager.env.step.assert_not_called()
+            voyager.action_agent.process_ai_message.assert_not_called()
+        finally:
+            release.set()
+
     def test_late_action_completion_is_discarded_without_executing_code(self):
         voyager = Voyager.__new__(Voyager)
         voyager.task = "Bring Alice supplies"

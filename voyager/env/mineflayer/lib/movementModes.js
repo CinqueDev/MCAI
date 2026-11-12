@@ -45,7 +45,7 @@ class MovementModes {
         }
         return result;
     }
-    _request({ mode, reference, distance = 2, requester, recipient = null, memories = [], requesterLocation = null, requesterDimension = null, key = null, question = null }) {
+    _request({ mode, reference, distance = 2, requester, recipient = null, memories = [], requesterLocation = null, requesterDimension = null, key = null, question = null, scheduling = "queue" }) {
         const controller = this.controller;
         if (!/^[A-Za-z0-9_]{1,16}$/.test(requester || '') || (recipient !== null && recipient !== requester)) throw new Error('Invalid movement requester/channel');
         if (key) {
@@ -92,8 +92,9 @@ class MovementModes {
             if (this.running?.record.id === previous.id) controller.interrupt().catch(() => {});
         }
         controller.save();
+        if (scheduling === 'interrupt') controller.requestHandoff(task);
         this.dispatch();
-        return { ok: true, id: task.id, message: `${task.state === 'running' ? 'Started' : 'Queued'}: ${description}. Use stop/pause/cancel to control it.` };
+        return { ok: true, id: task.id, message: `${task.state === 'running' ? 'Started' : 'Queued'}: ${description}. Use stop/pause/cancel to control it.` + controller.schedulingMessage(task) };
     }
     assign(mode, reference, distance = 2) {
         const lease = this.controller.context.getStore();
@@ -116,7 +117,8 @@ class MovementModes {
         // Supersede this requester's queued modes as well as the running one.
         // Otherwise a mode queued during curriculum work can return after a build.
         for (const mode of controller.records.filter(t => t.movement && t.id !== task.id &&
-            ['queued', 'running', 'paused'].includes(t.state) && t.priority < task.priority)) {
+            ['queued', 'running', 'paused'].includes(t.state) &&
+            (t.requester?.toLowerCase() === task.requester.toLowerCase() || t.priority < task.priority))) {
             const owned = mode.requester?.toLowerCase() === task.requester.toLowerCase();
             if (owned && !task.resumeMovement) {
                 mode.state = 'cancelled'; mode.reason = `Superseded by task ${task.id}`;
@@ -135,6 +137,7 @@ class MovementModes {
         const controller = this.controller;
         if (this.ready && !controller.disconnected && !controller.suspended) {
             const foreground = controller.records.filter(t => t.state === 'queued' && t.requester && !t.movement &&
+                !controller.isYielded(t) &&
                 t.priority > 50 && (!t.dependsOnTask || controller.get(t.dependsOnTask)?.state === 'completed'))
                 .sort((a, b) => b.priority - a.priority)[0];
             if (foreground) this.yieldForForeground(foreground);
@@ -142,7 +145,7 @@ class MovementModes {
         if (!this.ready || this.running || controller.disconnected || controller.suspended || controller.lease || controller.cleanupCount) return;
         let record = controller.active();
         if (!record) {
-            const next = controller.records.filter(t => t.state === 'queued' && (!t.dependsOnTask || controller.get(t.dependsOnTask)?.state === 'completed')).sort((a, b) => b.priority - a.priority)[0];
+            const next = controller.records.filter(t => t.state === 'queued' && !controller.isYielded(t) && (!t.dependsOnTask || controller.get(t.dependsOnTask)?.state === 'completed')).sort((a, b) => b.priority - a.priority)[0];
             if (!next?.movement) return;
             record = controller.claim(next.id);
         }

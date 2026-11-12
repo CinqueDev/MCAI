@@ -59,6 +59,7 @@ function renderCommandHelp(username) {
         "[Gameplay requests] " + ACTIONS.map(a => a.example).join("; ") + ".",
         "[Natural-language tools] " + TOOL_CATALOG.map(t => t.examples.join("; ")).join("; ") + ". No exact wording is required; work requests bypass social-chat cooldowns and promises require actual tool results.",
         "[Chat preferences] " + SOCIAL.join("; ") + ". Private messages and public username mentions still require replies.",
+        "[Responsive work] The AI can choose to handle a quick/urgent request next, temporarily yielding your own or autonomous work and returning afterward. For example: come here now, then continue mining; finish what you are doing, then gather wood. Inventory transactions settle first; explicit pauses/stops and other players' tasks are respected. Continuous follow/stay lasts until stopped or replaced.",
         `Other than immediate controls and current-location saves, these are AI-interpreted request examples, not rigid commands. For a required reply, use /msg ${username} <request> or mention ${username} publicly. New work replaces your old follow/stay request unless you ask to resume following afterward. Work is queued and attempted; materials, visible targets and reachable locations are needed. Building needs size/materials/location (up to 128 blocks per batch); movement stays in the current dimension. Named projects persist versions/progress (up to 4096 cells, 64x64 across), preserve conflicting player edits, and support axis/slab/furnace-chest facing states.`,
     ].join("\n");
 }

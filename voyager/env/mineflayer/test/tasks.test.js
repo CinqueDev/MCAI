@@ -545,3 +545,78 @@ test('nested container transfer is covered by one outer inventory receipt', asyn
     assert.equal(task.recoveryEvidence.length,1);
     assert.equal(task.recoveryEvidence[0].name,'deposit');
 });
+
+test('semantic handoff switches ordinary work and automatically returns to its saved task', async () => {
+    const { controller } = fixture();
+    const original = start(controller,{task:'Mine 16 iron'});
+    const lease = begin(controller,original);
+    lease.action.results.push({type:'mined',count:3});
+    const request = controller.enqueue({task:'Approach Alice',requester:'Alice',scheduling:'interrupt'});
+    assert.equal(original.state,'queued');
+    assert.equal(controller.suspended,false);
+    assert.equal(request.schedulingResult,'interrupted');
+    assert.throws(()=>controller.context.run(lease,()=>controller.check()),TaskInterrupted);
+    controller.finishAction(lease,[]);
+    await settle();
+    assert.equal(controller.claim().id,request.id);
+    controller.complete(request.id,request.generation,true);
+    assert.equal(controller.claim().id,original.id);
+    assert.equal(original.recovery,true);
+});
+
+test('handoff waits for an atomic transfer, then interrupts before another operation', async () => {
+    const { controller } = fixture();
+    const original = start(controller), lease = begin(controller,original);
+    let finish;
+    const transfer = controller.context.run(lease,()=>controller.operation('deposit',()=>new Promise(resolve=>{finish=resolve;}),true));
+    const next = controller.enqueue({task:'Approach Alice',requester:'Alice',scheduling:'interrupt'});
+    assert.equal(original.state,'running');
+    assert.equal(next.schedulingResult,'waiting_atomic');
+    assert.equal(controller.claim(next.id),null);
+    finish();
+    await assert.rejects(transfer,TaskInterrupted);
+    assert.equal(lease.action.operations[0].state,'completed');
+    assert.equal(original.state,'queued');
+    assert.equal(original.needsReview,undefined);
+    controller.finishAction(lease,[]);
+    await settle();
+    assert.equal(controller.claim().id,next.id);
+});
+
+test('queue choice, another player and explicit pauses cannot be preempted', async () => {
+    for (const kind of ['queue','other','manual']) {
+        const { controller } = fixture();
+        const original = start(controller,{requester:kind==='other'?'Bob':'Alice'});
+        if (kind==='manual') await controller.control('pause','Alice');
+        controller.enqueue({task:'Come to Alice',requester:'Alice',scheduling:kind==='queue'?'queue':'interrupt'});
+        assert.equal(original.state,kind==='manual'?'paused':'running');
+        assert.equal(controller.suspended,kind==='manual');
+    }
+});
+
+test('cancelling a deferred handoff leaves the original work running', async () => {
+    const { controller } = fixture();
+    const original = start(controller), lease=begin(controller,original);
+    let finish;
+    const operation = controller.context.run(lease,()=>controller.operation('deposit',()=>new Promise(r=>{finish=r;}),true));
+    const next=controller.enqueue({task:'Come here',requester:'Alice',scheduling:'interrupt'});
+    await controller.control('cancel','Alice',next.id);
+    finish(); await operation;
+    assert.equal(original.state,'running');
+    assert.equal(original.yieldTo,undefined);
+    controller.finishAction(lease,[]);
+});
+
+test('project handoff waits until the current cell has a progress receipt', async () => {
+    const { controller }=fixture();
+    const original=start(controller), lease=begin(controller,original);
+    original.projectId='project';
+    controller.projects.push({id:'project',status:'building',progress:{cell:{status:'intent'}}});
+    const next=controller.enqueue({task:'Come here',requester:'Alice',scheduling:'interrupt'});
+    assert.equal(original.state,'running');
+    assert.equal(next.schedulingResult,'waiting_atomic');
+    controller.projects[0].progress.cell.status='done';
+    assert.throws(()=>controller.context.run(lease,()=>controller.check()),TaskInterrupted);
+    assert.equal(original.state,'queued');
+    controller.finishAction(lease,[]);
+});

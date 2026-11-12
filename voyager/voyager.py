@@ -324,6 +324,27 @@ class Voyager:
         self.action_agent_rollout_num_iter += 1
         return self.messages, 0, state != "building", info
 
+    def _responsive_action_completion(self):
+        """Discard obsolete model output without making a handoff wait for the API."""
+        if not getattr(self, "task_controller", None) or not getattr(self, "active_task", None):
+            return self.action_agent.llm(self.messages), None
+        pending = Future()
+        messages = self.messages
+
+        def complete():
+            try:
+                pending.set_result(self.action_agent.llm(messages))
+            except Exception as error:
+                pending.set_exception(error)
+
+        threading.Thread(target=complete, name="action-planning", daemon=True).start()
+        while not pending.done():
+            controlled = self._control_result()
+            if controlled:
+                return None, controlled
+            time.sleep(0.2)
+        return pending.result(), None
+
     def step(self):
         if self.action_agent_rollout_num_iter < 0:
             raise ValueError("Agent must be reset before stepping")
@@ -332,7 +353,9 @@ class Voyager:
             return self.messages, 0, False, controlled
         if getattr(self, "active_task", None) and self.active_task.get("projectId"):
             return self._step_project()
-        ai_message = self.action_agent.llm(self.messages)
+        ai_message, controlled = self._responsive_action_completion()
+        if controlled:
+            return self.messages, 0, False, controlled
         controlled = self._control_result()
         if controlled:
             return self.messages, 0, False, controlled

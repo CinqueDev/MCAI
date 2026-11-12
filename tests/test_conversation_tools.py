@@ -53,6 +53,21 @@ class ConversationToolTests(unittest.TestCase):
         return {"id": 1, "sender": "Alice", "channel": "private", "text": text,
                 "requesterLocation": {"x": 4, "y": 64, "z": 8}, "requesterDimension": "overworld", **extra}
 
+    def test_semantic_interrupt_choice_is_forwarded_and_reply_uses_scheduler_receipt(self):
+        llm = NativeLLM([answer(calls=[('queue_task', {'task':'Approach Alice','scheduling':'interrupt'})]), answer('{"reply":"On my way"}')])
+        self.tasks.enqueue.return_value = {'id':'abcdefgh1','task':'Approach Alice','schedulingResult':'waiting_atomic'}
+        worker = self.worker(llm)
+        data = {**self.snapshot, 'taskControl':{**self.snapshot['taskControl'], 'active':{
+            'id':'old','state':'running','task':'Mine coal','requester':'Alice','actions':[
+                {'operations':[{'atomic':True,'state':'started'}]}]}}}
+        worker.respond(data,self.source('come here, then continue mining'))
+        self.assertEqual(self.tasks.enqueue.call_args.args[0]['scheduling'],'interrupt')
+        context=json.loads(llm.requests[0][0][1]['content'])
+        self.assertTrue(context['execution']['can_interrupt'])
+        self.assertTrue(context['execution']['atomic_in_flight'])
+        self.assertIn('atomic operation settles',worker.request.call_args.args[0]['text'])
+        self.tasks.control.assert_not_called()
+
     def test_unearned_plain_text_movement_promise_is_repaired_into_actual_work(self):
         llm = NativeLLM([answer('{"reply":"On my way!"}'),
                          answer(calls=[('queue_task', {'task':'Approach Alice and stop nearby'})]),
